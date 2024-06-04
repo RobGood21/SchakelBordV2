@@ -15,7 +15,7 @@
 #include <EEPROM.h>
 //display 
 #include <Wire.h>
-// #include <Adafruit_GFX.h>
+#include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 //fastled
 
@@ -35,7 +35,7 @@ Adafruit_SSD1306 dp(128, 64, &Wire, -1); //constructor display  takes program 95
 #define FalseBit OCR2A = 230 //pulsduur false  bit
 
 //constructors
-NmraDcc  Dcc;
+//NmraDcc  Dcc;
 
 //General purpose registers
 	//GPIOR0 bit0=toggle shiftproces bit1=toggle encoder ISR timer 2, 
@@ -54,14 +54,13 @@ DccBuffer buffer[10];
 
 struct Dekoder {
 	byte reg;
-	//bit6 = groot adres 256~512
-	//bit7=factory reset, reserved bit, als 1 dan automatisch adressen naar default waarde instellen.
 	byte adres;
+	byte stand; //0~3 stand 4~7 false=stand niet bekend true is stand bekend
 };
+
 Dekoder dekoder[16];
-
-
 String txt;
+String txtbovenbalk;
 
 //public variables
 //byte shiftbyte[2]; //de bytes die in de shiftregisters worden geschoven
@@ -77,6 +76,7 @@ byte dcc_data[6]; //bevat te verzenden DCC bytes, current DCC commando
 byte dcc_aantalBytes; //aantal bytes current van het DCC commando
 byte switchgroup[2]; //welke groups zijn gekoppeld aan S1~S8 EEPROM 10, in theorie is hier 1 byte te winnen
 byte lastbutton = 1; //welke van de S1~S8 is het laatst ingedrukt
+byte lastset = 0; //welke switch groep van 4 is het laatste ingedrukt
 byte cursor = 0; byte submenu = 0;
 
 //byte temp;
@@ -89,8 +89,8 @@ void setup() {
 	//Display
 	dp.begin(SSD1306_SWITCHCAPVCC, 0x3C);
 	//DCC
-	Dcc.pin(0, 2, 1); //interrupt number 0; pin 2; pullup to pin2
-	Dcc.init(MAN_ID_DIY, 10, 0b10000000, 0); //bit7 true maakt accessoire decoder, bit6 false geeft decoder per decoderadres
+	//Dcc.pin(0, 2, 1); //interrupt number 0; pin 2; pullup to pin2
+	//Dcc.init(MAN_ID_DIY, 10, 0b10000000, 0); //bit7 true maakt accessoire decoder, bit6 false geeft decoder per decoderadres
 
 
 	//Fastled  waarschijnlijk niet te combieeen
@@ -126,11 +126,12 @@ void Eepromread() {
 		switchgroup[i] = EEPROM.read(10 + i);
 		if (switchgroup[i] > 20)switchgroup[i] = i; //default dus 0 en 1, tonen als 1 en 2 
 	}
+
 	for (byte i = 0; i < 16; i++) {
 		//struct decoder 4 bytes 
 		dekoder[i].adres = EEPROM.read(200 + (i * 4) + i);
 		dekoder[i].reg = EEPROM.read(201 + (i * 4) + i);
-		if (EEPROM.read(0)==0xFF) {
+		if (EEPROM.read(0) == 0xFF) {
 			//default waarde instellen
 			dekoder[i].adres = i;
 			EEPROM.update(200 + (i * 4) + i, i);
@@ -141,6 +142,10 @@ void Eepromread() {
 	}
 }
 void Eepromwrite() {
+	for (byte i = 0; i < 2; i++) {
+		EEPROM.update(10 + i, switchgroup[i]);
+	}
+
 	for (byte i = 0; i < 16; i++) {
 		EEPROM.update(200 + (i * 4) + i, dekoder[i].adres);
 		EEPROM.update(201 + (i * 4) + i, dekoder[i].reg);
@@ -149,7 +154,7 @@ void Eepromwrite() {
 void Factory() {
 	//reset EEPROM
 
-	DP_write("factory",5,20,2);
+	DP_write("factory", 5, 20, 2);
 
 }
 void Init() {
@@ -165,11 +170,11 @@ void Init() {
 	for (byte i = 0; i < 10; i++) {
 		comlast[i] = 0xFF;
 	}
-
+	dp.clearDisplay();
 	DP_bedrijf();
 }
 void loop() {
-	Dcc.process();
+	//Dcc.process();
 
 	//slowevent counter
 	if (millis() - slowtime > 10) {
@@ -288,15 +293,7 @@ void DP_debug(byte _n1, byte _n2) {
 	dp.print(_n2);
 	dp.display();
 }
-void DP_bovenbalk() {
-	dp.fillRect(0, 0, 128, 10, 1);
-	dp.setCursor(1, 1);
-	dp.setTextColor(0);
-	dp.setTextSize(1);
-	dp.print(txt);
 
-	dp.display();
-}
 //switches
 void SW_exe() {
 	byte _changed = 0;
@@ -381,6 +378,7 @@ void SW_button(byte _button, bool _onoff) {
 				DP_common();
 			}
 			else {
+				dp.clearDisplay();
 				DP_bedrijf();
 			}
 			Eepromwrite();
@@ -396,6 +394,7 @@ void SW_button(byte _button, bool _onoff) {
 				DP_single();
 			}
 			else {
+				dp.clearDisplay();
 				DP_bedrijf();
 			}
 			Eepromwrite();
@@ -418,7 +417,7 @@ void SW_button(byte _button, bool _onoff) {
 			case 5: //S3
 				switch (cursor) {
 				case 0: //factory reset
-					GPIOR1 &= ~(1 << 7); 
+					GPIOR1 &= ~(1 << 7);
 					break;
 				}
 				break;
@@ -430,7 +429,7 @@ void SW_button(byte _button, bool _onoff) {
 						Factory();
 					}
 					else {
-					 GPIOR1 |= (1 << 7);
+						GPIOR1 |= (1 << 7);
 					}
 					break;
 				}
@@ -527,58 +526,152 @@ void SW_button(byte _button, bool _onoff) {
 			DP_single();
 		}
 		else {
-
 			//*************************bedrijfsmode
-			_button -= 2;
-			lastbutton = _button; //memory last button, alleen in bedrijfsmode
-
-			_channel = _button;
-			//ophalen welke group
-
-			if (_channel > 4) {
-				_channel -= 4;
-				_group = switchgroup[1];
-			}
-			else {
-				_group = switchgroup[0];
-			}
-
-			if (_onoff) { 			//alleen bij indrukken knop tonen in de bovenbalk, niet het loslaten
-				txt = "";
-				txt += "<"; txt += _button;
-				txt += "> ";
-				dp.setCursor(10, 1);
-				txt += "S[";
-				txt += _group + 1; //tonen als 1~16
-				txt += "-";
-				txt += _channel;
-				txt += "]";
-				//txt = F("nu komt switch en group");
-				DP_bovenbalk();
-			}
+			SW_bedrijf(_button, _onoff);
 		}
 		break;
 	}
 }
+void SW_bedrijf(byte _button, bool _onoff) {
+
+	byte _channel;
+	byte _group;
+	_button -= 2;
+	lastbutton = _button; //memory last button, alleen in bedrijfsmode
+	_channel = _button;
+	if (_channel > 4) {
+		_channel -= 4;
+		_group = switchgroup[1];
+	}
+	else {
+		_group = switchgroup[0];
+	}
+
+	DCC_command(_group, _channel - 1, _onoff); //channel = hier 1~4
+
+
+	if (_onoff)TXT_bovenbalk(_button, _group, _channel);			//alleen bij indrukken knop tonen in de bovenbalk, niet het loslaten
+	DP_bedrijf();
+}
+void TXT_bovenbalk(byte _button, byte _group, byte _channel) {
+	txtbovenbalk = "";
+	txtbovenbalk += "<";
+	if (_button == 0)txtbovenbalk += "c"; else txtbovenbalk += _button;
+	txtbovenbalk += "> ";
+	dp.setCursor(10, 1);
+	txtbovenbalk += "S[";
+	txtbovenbalk += _group + 1; //tonen als 1~16
+	txtbovenbalk += "-";
+	txtbovenbalk += _channel;
+	txtbovenbalk += "]";
+}
+
 void SW_conn(byte _dec, byte _chan, bool _onoff) {
 	//Schakelaars opgedeeld in 16 groepen van 4 _dec=de groep, _ch 0~3 channel in de groep, _onoff = knop ingedrukt of losgelaten
+	lastset = _dec;
 
-	//schakel opties: 
-	//debug
+
+	TXT_bovenbalk(0, _dec, _chan + 1);
+	//DCCcommando hier maken
+	DCC_command(_dec, _chan, _onoff);
+	DP_bedrijf();
+}
+
+void DCC_command(byte _dec, byte _chan, bool _onoff) { //_onoff knop ingedrukt of losgelaten
+
+	Serial.println(_chan);
+
+	if (_onoff) { //knop ingedrukt
+		dekoder[_dec].stand |= (1 << _chan + 4); //zet stand als bekend
+		//afhankelijk van instellingen nog meerdere opties hier voorlopig efkens alleen omschakelen van de stand
+		dekoder[_dec].stand ^= (1 << _chan); //Toggle stand
+	}
+	else { //knop losgelaten
+
+	}
+
+	//hier de feitelijk command maken in de command buffers
+
+}
+
+
+void DP_bedrijf() {
+	byte _set = 0; byte _stand; byte _aantalregels = 3;
 	dp.clearDisplay();
-	dp.setCursor(10, 30);
+	DP_bovenbalk();
+
+
+	if (lastset == switchgroup[0] || lastset == switchgroup[1])_aantalregels = 2;
+
+
+	for (byte x = 0; x < 4; x++) {
+		for (byte y = 0; y < _aantalregels; y++) {
+
+			switch (y) {
+			case 0: //Bovenste rij switchgroup 0
+				_set = switchgroup[0];
+				break;
+			case 1: //switchgroup 1
+				_set = switchgroup[1];
+				break;
+			case 2: //last set
+				_set = lastset;
+				break;
+			}
+
+			if (dekoder[_set].stand & (1 << (x + 4))) {
+				if (dekoder[_set].stand & (1 << x)) {
+					_stand = 2; //afslaand of aan
+				}
+				else {
+					_stand = 1; //recht of uit
+				}
+			}
+			else {
+				_stand = 0;
+			}
+			switch (_stand) {
+			case 0: //niet bekend
+				dp.drawRect(42 + x * 20, 17 + y * 16, 10, 10, 1);
+				break;
+			case 1: //recht of uit
+				dp.drawCircle(46 + x * 20, 21 + y * 16, 6, 1);
+				break;
+			case 2: //afslaand of aan
+				dp.fillCircle(46 + x * 20, 21 + y * 16, 6, 1);
+				break;
+
+			}
+		}
+	}
+	//labels
+	txt = ">";
+	dp.setCursor(2, 14);
+	dp.setTextColor(1);
 	dp.setTextSize(2);
-	dp.print(_dec); dp.print("  "); dp.print(_chan); dp.print("  "); dp.print(_onoff);
+	txt += switchgroup[0] + 1;
+	//txt += "]";
+	dp.print(txt);
+	txt = ">"; txt += switchgroup[1] + 1; //txt += "]";
+	dp.setCursor(2, 30);
+	dp.print(txt);
+	if (_aantalregels > 2) {
+		txt = ">";
+		txt += lastset + 1;
+		dp.setCursor(2, 46);
+		dp.print(txt);
+	}
+
 	dp.display();
 }
-void DP_bedrijf() {
-	//tekent scherm in bedrijf
-	dp.clearDisplay();
-	dp.setCursor(10, 30);
-	dp.setTextSize(2);
-	dp.setTextColor(1);
-	dp.print("Bedrijf");
-	dp.display();
+
+void DP_bovenbalk() {
+	dp.fillRect(0, 0, 128, 10, 1);
+	dp.setCursor(1, 1);
+	dp.setTextColor(0);
+	dp.setTextSize(1);
+	dp.print(txtbovenbalk);
+	//dp.display();  wordt gedaan in aanroepende functie DP_bedrijf
 }
 void DP_single() {
 	//tekent de single instellingen
@@ -592,7 +685,7 @@ void DP_single() {
 	dp.setCursor(1, 1);
 	dp.setTextSize(2);
 	dp.setTextColor(1);
-	
+
 	byte y1; byte y2;
 	if (_group == 0) {
 		y1 = 5; y2 = 12;
@@ -709,7 +802,7 @@ void DP_single() {
 			dp.fillRect(60, 20, 40, 20, 1);
 			dp.setTextColor(0);
 		}
-		if (dekoder[switchgroup[_group]].reg & 1<<5) {
+		if (dekoder[switchgroup[_group]].reg & 1 << 5) {
 			dp.setCursor(62, 22);
 			dp.print(F("inv"));
 		}
@@ -732,7 +825,7 @@ void DP_common() {
 		dp.print(F("Sure?"));
 	}
 	else {
-	 dp.print(F("Reset? "));
+		dp.print(F("Reset? "));
 	}
 	dp.display();
 }
