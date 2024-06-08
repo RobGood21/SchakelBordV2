@@ -27,12 +27,10 @@
 //Encoder
 #define TrueBit OCR2A = 115 //pulsduur true bit
 #define FalseBit OCR2A = 230 //pulsduur false  bit
+#define Aantalbuffers 10
+
 
 Adafruit_SSD1306 dp(128, 64, &Wire, -1); //constructor display  takes program 9598bytes; memory  57bytes
-
-
-#define TrueBit OCR2A = 115 //pulsduur true bit
-#define FalseBit OCR2A = 230 //pulsduur false  bit
 
 //constructors
 //NmraDcc  Dcc;
@@ -45,15 +43,22 @@ Adafruit_SSD1306 dp(128, 64, &Wire, -1); //constructor display  takes program 95
 
 //structs
 struct DccBuffer {
-	byte reg;
+	byte delay;
 	byte repeat;
-	byte adres;
+	byte data[2]; //alleen standaard accessories 0=adresbyte 1=instruction byte
 };
-DccBuffer buffer[10];
+DccBuffer buffer[Aantalbuffers];
 
 
 struct Dekoder {
 	byte reg;
+	//bit0-1 timing 0=continue 1=0.25 2=0.5 3=1sec
+	//bit2-3 dual/mono mode B00/B01=dual B10=channels 1-2 B11=channels 3-4
+	//bit4 switch aan/uit flipflop of momentary 
+	//bit5 invert ports
+	//bit6 nc
+	//bit7 hoog adres 256~511
+
 	byte adres;
 	byte stand; //0~3 stand 4~7 false=stand niet bekend true is stand bekend
 };
@@ -71,9 +76,10 @@ unsigned long slowtime;
 byte count_preample;
 byte count_byte;
 byte count_bit;
-byte dcc_fase = 0;
-byte dcc_data[6]; //bevat te verzenden DCC bytes, current DCC commando
-byte dcc_aantalBytes; //aantal bytes current van het DCC commando
+byte buffercount;
+byte dccfase = 0;
+byte dccdata[6]; //bevat te verzenden DCC bytes, current DCC commando
+byte dccaantalBytes; //aantal bytes current van het DCC commando
 byte switchgroup[2]; //welke groups zijn gekoppeld aan S1~S8 EEPROM 10, in theorie is hier 1 byte te winnen
 byte lastbutton = 1; //welke van de S1~S8 is het laatst ingedrukt
 byte lastset = 0; //welke switch groep van 4 is het laatste ingedrukt
@@ -152,36 +158,42 @@ void Eepromwrite() {
 	}
 }
 void Factory() {
-	//reset EEPROM
 
-	DP_write("factory", 5, 20, 2);
-
+	for (int i = 0; i < EEPROM.length(); i++) {
+		EEPROM.update(i, 0xFF);
+	}
+	setup();
 }
 void Init() {
 	//shiftregisters 1 maken
-
+	GPIOR0 = 0; GPIOR1 = 0; GPIOR2 = 0; //reset general purpose registers
+	
 	PORTB |= (1 << 3); //serial pin hoog
 	for (byte i = 0; i < 16; i++) {
 		PINB |= (1 << 2); PINB |= (1 << 2); //schuif 16x een 1 in de shiftregisters
 	}
 	PINB |= (1 << 1); PINB |= (1 << 1); //latch in shiftregisters
-
-
 	for (byte i = 0; i < 10; i++) {
 		comlast[i] = 0xFF;
 	}
+
 	dp.clearDisplay();
 	DP_bedrijf();
 }
 void loop() {
 	//Dcc.process();
-
 	//slowevent counter
-	if (millis() - slowtime > 10) {
+	if (dccfase == 0) DCC_exe();
+
+	if (millis() - slowtime > 1) {
 		slowtime = millis();
 		Shift();
+
+		//DCC buffertijden verlagen
+
 	}
 }
+
 
 ISR(TIMER2_COMPA_vect) {
 	//cli(); //V401
@@ -191,7 +203,7 @@ ISR(TIMER2_COMPA_vect) {
 
 	if (~GPIOR0 & (1 << 1)) {
 		//bepaal volgende bit
-		switch (dcc_fase) {
+		switch (dccfase) {
 		case 0: //niks doen alleen 1 bits zenden 	
 			TrueBit;
 			break;
@@ -200,7 +212,7 @@ ISR(TIMER2_COMPA_vect) {
 			count_preample++;
 			if (count_preample > 22) {
 				count_preample = 0;
-				dcc_fase = 2;
+				dccfase = 2;
 				FalseBit;
 				count_bit = 7;
 				count_byte = 0;
@@ -210,7 +222,7 @@ ISR(TIMER2_COMPA_vect) {
 		case 2: //send dcc_data
 			//MSB first; LSB last
 			if (count_bit < 8) {
-				if (dcc_data[count_byte] & (1 << count_bit)) { //als het [countbit] van het byte[countbyte] waar is dan>> 
+				if (dccdata[count_byte] & (1 << count_bit)) { //als het [countbit] van het byte[countbyte] waar is dan>> 
 					TrueBit;
 				}
 				else {
@@ -220,12 +232,12 @@ ISR(TIMER2_COMPA_vect) {
 			}
 			else { //count_bit 8 or more
 				count_bit = 7;
-				if (count_byte < dcc_aantalBytes) {
+				if (count_byte < dccaantalBytes) {
 					count_byte++; //next byte
 					FalseBit;
 				}
 				else { //command send reset	
-					dcc_fase = 0;
+					dccfase = 0;
 					TrueBit;
 				}
 			}
@@ -239,15 +251,94 @@ ISR(TIMER2_COMPA_vect) {
 		}
 	}
 }
+
+void DCC_command(byte _dec, byte _chan, bool _onoff) { //_onoff knop ingedrukt of losgelaten
+	//maakt een command in de (command)buffers
+
+	//TIJDELIJK FF de offs eruit
+	if (! _onoff)return;
+
+	byte _reg = dekoder[_dec].reg;
+	byte _adres = dekoder[_dec].adres+1; //(adres 0~255)
+	
+	if (_onoff) { //knop ingedrukt
+		dekoder[_dec].stand |= (1 << _chan + 4); //zet stand als bekend
+		//afhankelijk van instellingen nog meerdere opties hier voorlopig efkens alleen omschakelen van de stand
+		dekoder[_dec].stand ^= (1 << _chan); //Toggle stand
+	}
+	else { //knop losgelaten
+	}
+	//hier de feitelijk command maken in de command buffers
+	//vrije buffer zoeken
+	byte _buffer = DCC_findbuffer();
+	buffer[_buffer].data[0] = 128; // adresbyte B10 00 0000
+	buffer[_buffer].data[1] = 240; //B11110000 
+	//adres 
+	if (dekoder[_dec].reg & (1 << 7))buffer[_buffer].data[1] &= ~(1 << 6); //adresses 512~1024
+		if (_adres > 127) { _adres -= 128; buffer[_buffer].data[1] &= ~(1 << 5); }
+		if (_adres > 63) { _adres -= 64; buffer[_buffer].data[1] &= ~(1 << 4); }
+		if (_adres > 31) { _adres -= 32; buffer[_buffer].data[0] |= (1 << 5); }
+		if (_adres > 15) { _adres -= 16; buffer[_buffer].data[0] |= (1 << 4); }	
+		if (_adres > 7) { _adres -= 8; buffer[_buffer].data[0] |= (1 << 3); }
+		if (_adres > 3) { _adres -= 4; buffer[_buffer].data[0] |= (1 << 2); }
+		if (_adres > 1) { _adres -= 2; buffer[_buffer].data[0] |= (1 << 1); }
+		if (_adres > 0) { buffer[_buffer].data[0] |= (1 << 0); }	
+//channel
+	//_chan = _chan << 1;
+	buffer[_buffer].data[1] += _chan << 1;
+
+	bool _xor=false;
+	bool _s= dekoder[_dec].stand & (1 <<_chan);
+	bool _v= dekoder[_dec].reg & (1 << 5);
+	_xor = _s ^ _v;
+	//_xor= (dekoder[_dec].stand & (1 << _chan)) ^ (dekoder[_dec].reg & (1 << 5)); //dit kan de compiler niet aan...
+	if (_xor == false) buffer[_buffer].data[1] |= (1 << 0); //Serial.println("jo");
+
+	//port, stand bit 5=invert   false is afslaand
+	//if (dekoder[_dec].stand & (1 << _chan) ^ dekoder[_dec].reg & (1 << 5)) Serial.println("nu dus");
+
+//onoff even tijdelijk alleen de aan
+	buffer[_buffer].data[1] |= (1 << 3);
+	buffer[_buffer].repeat = 4;
+	buffer[_buffer].delay = 0;
+
+	//if (_onoff) { Serial.print(buffer[_buffer].data[0], BIN); Serial.print("       "); Serial.println(buffer[_buffer].data[1], BIN); }
+}
+
+byte DCC_findbuffer() {
+	byte _buffer;
+	//buffers eerst zoeken op 0 repeats , daarna op 1 repeats om aantal buffers te verdubbelen voordat er geen buffer wordt gevonden. 
+	for (byte repeats = 0; repeats < 3; repeats++) {
+		for (byte i = 0; i < Aantalbuffers; i++) {
+			if (buffer[i].repeat == i) {
+				return i;
+			}
+		}
+	}
+	//Geen vrije buffer gevonden hoogste buffer overschrijven
+	return Aantalbuffers - 1;
+}
 void DCC_exe() {
+	//zoekt een command om te verzenden, buffers allemaal om de beurt testen, niet telkens de eerste of de laatste
+	byte _count = buffercount;
+	do {
+		if (buffer[_count].repeat > 0 && buffer[_count].delay == 0) { //command buffer gevonden
 
-	//idee, voor de test maak een looplicht op de dcc monitor
+			//Serial.print(_count); Serial.print("-"); Serial.print(buffer[_count].repeat); Serial.print("  ");
 
+			buffer[_count].repeat--;
+			dccdata[0] = buffer[_count].data[0];
+			dccdata[1] = buffer[_count].data[1];
+			dccdata[2] = buffer[_count].data[0] ^ buffer[_count].data[1]; //checksum
+			dccaantalBytes = 3;
+			dccfase = 1;
+			buffercount = _count;
 
-	//Command ophalen uit de buffer
-	//aan de hand van het command de dcc_date bytes vullen
-	//Aantal bytes in dcc_aantalbytes
-	//dcc fase naar 1
+			return; //beindig het proces
+		}		
+		_count ++ ;
+		if (_count > Aantalbuffers-1)_count = 0;
+	} while (_count !=buffercount);  //loop eindigt ook als geen te verzenden command is gevonden
 }
 void notifyDccAccTurnoutBoard(uint16_t BoardAddr, uint8_t OutputPair, uint8_t Direction, uint8_t OutputPower) {
 }
@@ -328,8 +419,6 @@ void SW_exe() {
 void SW_div(byte _sw, bool _onoff) {
 	//zet de schakelaar mutaties om naar 11 on-board switches. En naar schakelmutaties verdeeld over 16 'decoders'
 	//elk met 4 channels. Alles met een ingedrukt en losgelaten trigger. scrollen van de 8 on-board switches nog niet gemaak. 29mei2024
-
-
 	byte _ch = 0;
 	byte _dec = 0;
 	switch (shiftcount) {
@@ -577,24 +666,6 @@ void SW_conn(byte _dec, byte _chan, bool _onoff) {
 	DP_bedrijf();
 }
 
-void DCC_command(byte _dec, byte _chan, bool _onoff) { //_onoff knop ingedrukt of losgelaten
-
-	Serial.println(_chan);
-
-	if (_onoff) { //knop ingedrukt
-		dekoder[_dec].stand |= (1 << _chan + 4); //zet stand als bekend
-		//afhankelijk van instellingen nog meerdere opties hier voorlopig efkens alleen omschakelen van de stand
-		dekoder[_dec].stand ^= (1 << _chan); //Toggle stand
-	}
-	else { //knop losgelaten
-
-	}
-
-	//hier de feitelijk command maken in de command buffers
-
-}
-
-
 void DP_bedrijf() {
 	byte _set = 0; byte _stand; byte _aantalregels = 3;
 	dp.clearDisplay();
@@ -677,7 +748,7 @@ void DP_single() {
 	//tekent de single instellingen
 		//tekent scherm in bedrijf
 	byte _group = 0;
-	byte _adres;
+	unsigned int _adres;
 	byte _mode;
 	byte _color = 1;
 	if (lastbutton > 4)_group++;
