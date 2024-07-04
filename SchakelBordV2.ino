@@ -31,6 +31,8 @@
 #define Aantalbuffers 10
 #define Aantalrepeats 4
 
+#define Aantalpreamples 10
+
 
 Adafruit_SSD1306 dp(128, 64, &Wire, -1); //constructor display  takes program 9598bytes; memory  57bytes
 
@@ -39,6 +41,10 @@ Adafruit_SSD1306 dp(128, 64, &Wire, -1); //constructor display  takes program 95
 
 //General purpose registers
 	//GPIOR0 bit0=toggle shiftproces bit1=toggle encoder ISR timer 2, 
+	// bit 2=halfbit 1; bit 3=halfbit 0
+	// 
+	// 
+	// 
 //GPIOR1  bit0=keuze program, bit1=keuze program bit7=factory reset bevesting; bit 6 reset adres false of reset all true
 //GPIOR2 te gebruiken als private variable binnen een void
 
@@ -88,8 +94,24 @@ byte dcctimer; //om een 10ms event te maken voor de puls of wisselstraat timers
 byte lastbutton = 1; //welke van de S1~S8 is het laatst ingedrukt
 byte lastset = 0; //welke switch groep van 4 is het laatste ingedrukt
 byte cursor = 0; byte submenu = 0;
+
+//decoder
+unsigned long RXtime;
+byte RXbitcount = 0;
+byte RXbytecount = 0;
+byte RXdata[3]; //hier worden de ontvangen adresbyte, instructie byte en checksum tijdelijk  opgeslagen
+byte RXpreample = 0;
+byte RXfase = 0;
+
+//temps
+unsigned int counttrue = 0;
+unsigned int countfalse = 0;
+bool lastbit = false;
+unsigned int countfout = 0;
+unsigned int counttemp = 0;
+
 //byte temp;
-//unsigned long teller;
+unsigned long teller;
 //byte teken;
 
 void setup() {
@@ -114,6 +136,14 @@ void setup() {
 	TCCR2A |= (1 << 1); //CTC mode clear timer at compare match, WGM21
 	TCCR2B = 2; //set register timer 2 prescaler 8
 	TIMSK2 |= (1 << 1);
+
+	//decoder interrupt settings
+	//EICRA |= (3 << 0); //set bit ISC01 en bit ISC00, interrupt 1 (pin2) op rising edge
+	//EIMSK |= (1 << 0); //set bit 0 INT0, enable int0
+
+	  // Zet de pin change interrupt in voor pin 2 (PCINT18, PCIE2 groep)
+	PCICR |= (1 << PCIE2); // Schakel pin change interrupt in voor groep PCIE2 (PCINT[23:16])
+	PCMSK2 |= (1 << PCINT18); // Schakel pin change interrupt in voor pin 2 (PCINT18)
 
 	TrueBit;
 
@@ -162,7 +192,6 @@ void Eepromread() {
 		}
 	}
 }
-
 
 void Eepromwrite() {
 
@@ -220,19 +249,100 @@ void Init() {
 	}
 	PINB |= (1 << 1); PINB |= (1 << 1); //latch in shiftregisters
 	for (byte i = 0; i < 10; i++) {
-		comlast[i] = 0xFF;	}
+		comlast[i] = 0xFF;
+	}
 
 	dp.clearDisplay();
 	DP_bedrijf();
 }
 void loop() {
-		//slowevent counter
-		if (millis() - slowtime > 1) {  //clock van 2ms 
-			slowtime = millis();
-			Shift();
-			if (dccfase == 0) DCC_exe();
-			DCC_timer();
+	//slowevent counter
+	if (millis() - slowtime > 1) {  //clock van 2ms 
+		slowtime = millis();
+		Shift();
+		if (dccfase == 0) DCC_exe();
+		DCC_timer();
+
+		//counttemp++;
+		//if (counttemp > 1000) { //2 seconden			
+		//	counttemp = 0;
+		//	Serial.print(" true:  "); Serial.print(counttrue);
+		//	counttrue = 0;
+		//	Serial.print("    false:  ");
+		//	Serial.print(countfalse);
+		//	countfalse = 0;
+		//	Serial.print("  fout:");
+		//	Serial.println(countfout);
+		//	countfout = 0;
+		//}
+	}
+}
+
+ISR(PCINT2_vect) {
+	unsigned int  _time;
+	//half bits lezen
+	_time = micros() - RXtime;
+	RXtime = micros();
+	if (_time > 48 && _time < 64) { //48<>64 beste keuze
+		if (GPIOR0 & (1 << 2)) {
+			RX(true);
+			GPIOR0 &= ~(1 << 2); //reset halfbit flag 1
 		}
+		GPIOR0 |= (1 << 2); //set halfbit flag 1
+		GPIOR0 &= ~(1 << 3); //reset halfbit flag 0 (een 1 halfbit is net ontvangen.)
+	}
+	else if (_time > 100 && _time < 200) {
+		if (GPIOR0 & (1 << 3)) {
+			RX(false);
+			GPIOR0 &= ~(1 << 3); //reset halfbit flag 0
+		}
+		GPIOR0 |= (1 << 3); //set halfbit flag 0
+		GPIOR0 &= ~(1 << 2); //reset halfbit flag 1 (een 0 halfbit is net ontvangen.)
+	}
+	else {
+		//ontvangst is fout, geen true en geen false bit, mag niet voorkomen een pauze in de pinchange die niet in de twee periodes past, total reset dus nodig
+		RX_reset();
+	}
+}
+
+void RX(bool _bit) {
+	switch (RXfase) {
+	case 0: //preample aftellen
+		if (_bit) {
+			RXpreample++;
+			if (RXpreample > RXpreample)RXfase = 1;
+		}
+		else {
+			RXpreample = 0; //opnieuw gaan tellen
+		}
+		break;
+
+	case 1: //preample ontvangen wacht op een false (start) bit
+		if (_bit) { //idle bit ontvangen
+
+		}
+		else { //Start bit ontvangen 
+			RXfase = 2;
+		}
+		break;
+
+	case 2: //startbit ontvangen
+
+		break;
+	}
+}
+
+void RX_reset() {
+	//faillure of na ontvangst command alles resetten
+	//bits data ontvangst reset
+	GPIOR0 &= ~(1 << 3); //reset half bit flag 0
+	GPIOR0 &= ~(1 << 2); //reset half bit flag 1
+	//reset data RX proces
+	RXdata[0] = 0;
+	RXdata[1] = 0;
+	RXdata[2] = 0;
+	RXpreample = 0;
+	RXfase = 0;
 }
 
 ISR(TIMER2_COMPA_vect) {
