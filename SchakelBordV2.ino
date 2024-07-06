@@ -31,7 +31,7 @@
 #define Aantalbuffers 10
 #define Aantalrepeats 4
 
-#define Aantalpreamples 10
+#define Aantalpreamples 12
 
 
 Adafruit_SSD1306 dp(128, 64, &Wire, -1); //constructor display  takes program 9598bytes; memory  57bytes
@@ -112,7 +112,7 @@ unsigned int counttemp = 0;
 
 //byte temp;
 unsigned long teller;
-//byte teken;
+byte temp;
 
 void setup() {
 	Serial.begin(9600); //takes program 1846bytes; memory 340bytes
@@ -283,21 +283,29 @@ ISR(PCINT2_vect) {
 	//half bits lezen
 	_time = micros() - RXtime;
 	RXtime = micros();
+
 	if (_time > 48 && _time < 64) { //48<>64 beste keuze
-		if (GPIOR0 & (1 << 2)) {
-			RX(true);
+
+		if (GPIOR0 & (1 << 2)) { //is halfbit 1 flag gezet
+			RX(true); //true bit ontvangen
 			GPIOR0 &= ~(1 << 2); //reset halfbit flag 1
 		}
-		GPIOR0 |= (1 << 2); //set halfbit flag 1
-		GPIOR0 &= ~(1 << 3); //reset halfbit flag 0 (een 1 halfbit is net ontvangen.)
+		else {
+			GPIOR0 |= (1 << 2); //set halfbit flag 1
+			GPIOR0 &= ~(1 << 3); //reset halfbit flag 0 (een 1 halfbit is net ontvangen.)
+		}
 	}
+
 	else if (_time > 100 && _time < 200) {
 		if (GPIOR0 & (1 << 3)) {
 			RX(false);
 			GPIOR0 &= ~(1 << 3); //reset halfbit flag 0
 		}
-		GPIOR0 |= (1 << 3); //set halfbit flag 0
-		GPIOR0 &= ~(1 << 2); //reset halfbit flag 1 (een 0 halfbit is net ontvangen.)
+		else {
+			GPIOR0 |= (1 << 3); //set halfbit flag 0
+			GPIOR0 &= ~(1 << 2); //reset halfbit flag 1 (een 0 halfbit is net ontvangen.)
+		}
+
 	}
 	else {
 		//ontvangst is fout, geen true en geen false bit, mag niet voorkomen een pauze in de pinchange die niet in de twee periodes past, total reset dus nodig
@@ -306,28 +314,97 @@ ISR(PCINT2_vect) {
 }
 
 void RX(bool _bit) {
+
 	switch (RXfase) {
+
 	case 0: //preample aftellen
 		if (_bit) {
 			RXpreample++;
-			if (RXpreample > RXpreample)RXfase = 1;
+
+			if (RXpreample > Aantalpreamples) {
+				RXfase = 1;
+				RXpreample = 0;
+			}
 		}
 		else {
-			RXpreample = 0; //opnieuw gaan tellen
+			RXpreample = 0;
 		}
 		break;
 
 	case 1: //preample ontvangen wacht op een false (start) bit
-		if (_bit) { //idle bit ontvangen
-
-		}
-		else { //Start bit ontvangen 
+		if (! _bit) {  //Start bit ontvangen 
 			RXfase = 2;
+			RXbitcount = 7;
 		}
 		break;
 
-	case 2: //startbit ontvangen
+	case 2: //startbit ontvangen, databyte ontvangen
+		if (_bit)  RXdata[0] |= (1 << RXbitcount); //databyte 
 
+		if (RXbitcount > 0) {
+			RXbitcount--;
+		}
+		else { //dus RXbitcount ==0
+			RXfase = 3;
+		}
+		break;
+
+	case 3:
+		if (_bit) { //kan niet hier moet een nul bit komen
+			RX_start();			
+		}
+		else {
+			RXfase = 4;
+			RXbitcount = 7;
+		}
+		break;
+
+	case 4: //ontvangen instructie byte
+		if (_bit)  RXdata[1] |= (1 << RXbitcount);  //instructie byte
+
+		if (RXbitcount > 0) {
+			RXbitcount--;
+		}
+		else { //dus RXbitcount == 0
+			RXfase = 5;
+		}
+		break;
+
+
+	case 5:
+		if (_bit) {
+			//kan niet hier moet een false bit komen
+			RX_start();
+		}
+		else {
+				RXfase = 6;
+				RXbitcount = 7;		
+		}
+		break;
+
+
+	case 6:
+		if (_bit)  RXdata[2] |= (1 << RXbitcount);  //checksum byte
+
+		if (RXbitcount > 0) {
+			RXbitcount--;
+		}
+		else { //dus RXbitcount == 0
+			RXfase = 7;
+		}
+		break;
+
+
+	case 7:
+		//3x databyte ontvangen nu een true bit als afsluiting
+		if (_bit) {
+			for (byte i = 0; i < 3; i++) {
+				Serial.print(RXdata[i], BIN); Serial.print("    ");
+			}
+			Serial.println("");
+		}
+		
+		RX_start();  //einde command
 		break;
 	}
 }
@@ -338,9 +415,16 @@ void RX_reset() {
 	GPIOR0 &= ~(1 << 3); //reset half bit flag 0
 	GPIOR0 &= ~(1 << 2); //reset half bit flag 1
 	//reset data RX proces
+
+	RX_start();
+}
+
+void RX_start() {
+
 	RXdata[0] = 0;
 	RXdata[1] = 0;
 	RXdata[2] = 0;
+
 	RXpreample = 0;
 	RXfase = 0;
 }
