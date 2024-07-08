@@ -28,7 +28,7 @@
 #define TrueBit OCR2A = 115 //pulsduur true bit 115
 #define FalseBit OCR2A = 230 //pulsduur false  bit 230
 
-#define Aantalbuffers 10
+#define Aantalbuffers 20
 #define Aantalrepeats 4
 
 #define Aantalpreamples 12
@@ -54,7 +54,7 @@ Adafruit_SSD1306 dp(128, 64, &Wire, -1); //constructor display  takes program 95
 struct DccBuffer {
 	byte delay;
 	byte repeat;
-	byte data[2]; //alleen standaard accessories 0=adresbyte 1=instruction byte 2=checksum
+	byte data[2]; //alleen standaard 3-bytes packets  0=adresbyte 1=instruction byte (2=checksum)
 };
 DccBuffer buffer[Aantalbuffers];
 
@@ -396,14 +396,8 @@ void RX(bool _bit) {
 
 
 	case 7:
-		//3x databyte ontvangen nu een true bit als afsluiting
-		if (_bit) {
-			for (byte i = 0; i < 3; i++) {
-				Serial.print(RXdata[i], BIN); Serial.print("    ");
-			}
-			Serial.println("");
-		}
-		
+		//3x databyte ontvangen nu een true bit als afsluiting, (voorlopig) alleen 3 bytes packets verwerken.
+		if (_bit) RX_command(); //verwerk command, packet.
 		RX_start();  //einde command
 		break;
 	}
@@ -427,6 +421,24 @@ void RX_start() {
 
 	RXpreample = 0;
 	RXfase = 0;
+}
+void RX_command() {
+	//verwerkt een ontvangen packet 
+	//filters
+	
+	if (RXdata[0] < 255) { //idle packet filter
+
+		byte _buffer = DCC_findbuffer(); //zoek een vrije buffer
+		buffer[_buffer].data[0] = RXdata[0];
+		buffer[_buffer].data[1] = RXdata[1];
+		buffer[_buffer].repeat = 1;
+		buffer[_buffer].delay = 0;
+
+		//for (byte i = 0; i < 3; i++) {
+		//	Serial.print(RXdata[i], BIN); Serial.print("    ");
+		//}
+		//Serial.println("");
+	}
 }
 
 ISR(TIMER2_COMPA_vect) {
@@ -488,10 +500,7 @@ ISR(TIMER2_COMPA_vect) {
 void DCC_command(byte _dec, byte _chan, bool _onoff) { //_onoff knop ingedrukt of losgelaten
 	//maakt een command in de (command)buffers
 	//TIJDELIJK FF de offs eruit
-
-
 	byte _adres = dekoder[_dec].adres; //(adres 0~255)	
-
 	//bit4 true=switch aan/uit flipflop of false=momentary 
 	if (dekoder[_dec].reg & (1 << 4)) {
 		//momentary
@@ -514,7 +523,6 @@ void DCC_command(byte _dec, byte _chan, bool _onoff) { //_onoff knop ingedrukt o
 		dekoder[_dec].stand ^= (1 << _chan); //Toggle stand
 
 	}
-
 
 	//hier de feitelijk command maken in de command buffers
 	//vrije buffer zoeken
