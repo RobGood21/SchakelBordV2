@@ -20,7 +20,7 @@
 //fastled
 
 //#include <FastLED.h>
-//CRGB pixels[32]; //uitgaan van alle schakelaars 1 pixel kost 192 bytes, in combi met Serial (usb) loopt de boel vast.
+//CRGB pixels[64]; //uitgaan van alle schakelaars 1 pixel kost 192 bytes, in combi met Serial (usb) loopt de boel vast.
 
 
 //defines
@@ -113,15 +113,11 @@ unsigned int counttemp = 0;
 //byte temp;
 unsigned long teller;
 byte temp;
-
 void setup() {
 	Serial.begin(9600); //takes program 1846bytes; memory 340bytes
 	//Display
 
 	dp.begin(SSD1306_SWITCHCAPVCC, 0x3C);
-	//DCC
-	//Dcc.pin(0, 2, 1); //interrupt number 0; pin 2; pullup to pin2
-	//Dcc.init(MAN_ID_DIY, 10, 0b10000000, 0); //bit7 true maakt accessoire decoder, bit6 false geeft decoder per decoderadres
 
 
 	//Fastled  waarschijnlijk niet te combieeen
@@ -162,7 +158,6 @@ void setup() {
 	//initialise
 	Init();
 }
-
 void Eepromread() {
 
 	byte _default = EEPROM.read(1);
@@ -192,7 +187,6 @@ void Eepromread() {
 		}
 	}
 }
-
 void Eepromwrite() {
 
 	EEPROM.update(1, 0);
@@ -206,7 +200,6 @@ void Eepromwrite() {
 		EEPROM.update(201 + (i * 4) + i, dekoder[i].reg);
 	}
 }
-
 void Factory() {
 	byte _adres = 0; byte _newadres = 0; bool _hoogadres = false;
 
@@ -277,7 +270,6 @@ void loop() {
 		//}
 	}
 }
-
 ISR(PCINT2_vect) {
 	unsigned int  _time;
 	//half bits lezen
@@ -312,7 +304,6 @@ ISR(PCINT2_vect) {
 		RX_reset();
 	}
 }
-
 void RX(bool _bit) {
 
 	switch (RXfase) {
@@ -402,7 +393,6 @@ void RX(bool _bit) {
 		break;
 	}
 }
-
 void RX_reset() {
 	//faillure of na ontvangst command alles resetten
 	//bits data ontvangst reset
@@ -412,7 +402,6 @@ void RX_reset() {
 
 	RX_start();
 }
-
 void RX_start() {
 
 	RXdata[0] = 0;
@@ -440,7 +429,6 @@ void RX_command() {
 		//Serial.println("");
 	}
 }
-
 ISR(TIMER2_COMPA_vect) {
 	//cli(); //V401
 	GPIOR0 ^= (1 << 1);
@@ -658,7 +646,6 @@ void DCC_exe() {
 		if (_count > Aantalbuffers - 1)_count = 0;
 	} while (_count != buffercount);  //loop eindigt ook als geen te verzenden command is gevonden
 }
-
 //switches
 void Shift() {
 	GPIOR0 ^= (1 << 0);
@@ -972,7 +959,6 @@ void SW_button(byte _button, bool _onoff) {
 		break;
 	}
 }
-
 void SW_common(byte _button, bool _onoff) {
 	//common programmode
 	if (_onoff == false)return; //alleen on knop acties
@@ -1022,7 +1008,6 @@ void SW_common(byte _button, bool _onoff) {
 	}
 	DP_common();
 }
-
 void SW_bedrijf(byte _button, bool _onoff) {
 
 	byte _channel;
