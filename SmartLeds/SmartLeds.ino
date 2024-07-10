@@ -27,8 +27,10 @@ Pixel pix[AantalPix];
 
 
 unsigned long timer = 0;
+unsigned long klok;
 
 void setup() {
+	Serial.begin(9600);
 
 	//FastLED.addLeds<WS2812, 8, RGB>(pix, AantalPix);
 
@@ -39,68 +41,107 @@ void setup() {
 
 
 void loop() {
-	if (millis() - timer > 1000) {
+	if (millis() - timer > 500) {
 		timer = millis();
+		//klok = micros();
+		//cli();
 		Animatie();
+		//sei();
+		//Serial.println(micros() - klok);
 	}
 }
 
-#define short 10
-#define long 20
+//
+//void Pix_one() { //stuur een 1-bit naar de smartleds
+//
+//	PORTB |= (1 << 0);
+//
+//	asm volatile(
+//		// Instruction        Clock   Description   Phase     Bit Transmitted
+//		//"sbi  %0, %1\n\t"  // 2      PIN HIGH       (T =  2) 
+//
+//		"rjmp .+0\n\t"        // 2      nop nop         (T =  4)
+//		"rjmp .+0\n\t"        // 2      nop nop         (T =  6)
+//		"rjmp .+0\n\t"        // 2      nop nop         (T =  8)
+//		//"rjmp .+0\n\t"        // 2      nop nop         (T = 10)
+//		//"rjmp .+0\n\t"        // 2      nop nop         (T = 12)
+//		"nop\n\t"               // 1      nop                (T = 13)
+//		);
+//		
+//	PORTB &= ~(1 << 0);
+//		asm volatile (
+//		
+//		//"cbi   %0, %1\n\t" // 2      PIN LOW       (T = 15)
+//		"rjmp .+0\n\t"        // 2      nop nop         (T = 17)
+//		//"rjmp .+0\n\t"        // 2      nop nop         (T = 19)
+//		//"nop\n\t"               // 1      nop                (T = 20)      1
+//		
+//			);
+//}
+//void Pix_zero() { //stuur een 0-bit naar de smartleds
+//	// 1xt hoog; 2xt laag
+//
+//	PORTB |= (1 << 0);
+//
+//	asm volatile(
+//		// Instruction        Clock   Description   Phase     Bit Transmitted
+//		"rjmp .+0\n\t"        // 2      nop nop         (T =  4)
+//		//"rjmp .+0\n\t"        // 2      nop nop         (T =  6)
+//
+//		);
+//	PORTB &= ~(1 << 0);
+//		asm volatile(
+//
+//		"rjmp .+0\n\t"        // 2      nop nop         (T = 10)
+//		"rjmp .+0\n\t"        // 2      nop nop         (T = 12)
+//		"rjmp .+0\n\t"        // 2      nop nop         (T = 14)
+//		"rjmp .+0\n\t"        // 2      nop nop         (T = 16)
+//		//"rjmp .+0\n\t"        // 2      nop nop         (T = 18)
+//		//"rjmp .+0\n\t"        // 2      nop nop         (T = 20)      0
+//		);
+//}
 
-void delayCycles(byte _cycles) {
-	for (byte i = 0; i < _cycles; i++) {
-		asm volatile ("nop\n\t");
-	}
-}
-
-void Pix_one() { //stuur een 1-bit naar de smartleds
-
-	PORTB |= (1 << 0);
-
+void Pixone() {
+	cli();
+	PINB |= (1 << 0); 
 	asm volatile(
-		// Instruction        Clock   Description   Phase     Bit Transmitted
-		//"sbi  %0, %1\n\t"  // 2      PIN HIGH       (T =  2) 
-
-		"rjmp .+0\n\t"        // 2      nop nop         (T =  4)
-		"rjmp .+0\n\t"        // 2      nop nop         (T =  6)
-		"rjmp .+0\n\t"        // 2      nop nop         (T =  8)
-		"rjmp .+0\n\t"        // 2      nop nop         (T = 10)
-		"rjmp .+0\n\t"        // 2      nop nop         (T = 12)
-		"nop\n\t"               // 1      nop                (T = 13)
+		"rjmp . + 0\n\t"
+		"rjmp . + 0\n\t"
+		"rjmp . + 0\n\t"
+		"rjmp . + 0\n\t"
 		);
-		
+	PINB |= (1 << 0);
 	PORTB &= ~(1 << 0);
-		asm volatile (
-		
-		//"cbi   %0, %1\n\t" // 2      PIN LOW       (T = 15)
-		"rjmp .+0\n\t"        // 2      nop nop         (T = 17)
-		"rjmp .+0\n\t"        // 2      nop nop         (T = 19)
-		"nop\n\t"               // 1      nop                (T = 20)      1
-		);
-}
-void Pix_zero() { //stuur een 0-bit naar de smartleds
-	// 1xt hoog; 2xt laag
-
-	PORTB |= (1 << 0);
-
 	asm volatile(
-		// Instruction        Clock   Description   Phase     Bit Transmitted
-		"rjmp .+0\n\t"        // 2      nop nop         (T =  4)
-		//"rjmp .+0\n\t"        // 2      nop nop         (T =  6)
+	//	"rjmp . + 0\n\t"
+	//	"rjmp . + 0\n\t"
+	//	"rjmp . + 0\n\t"
+	//	"rjmp . + 0\n\t"
+		"nop\n\t"
 		);
-	PORTB &= ~(1 << 0);
-		asm volatile(
-
-		"rjmp .+0\n\t"        // 2      nop nop         (T = 10)
-		"rjmp .+0\n\t"        // 2      nop nop         (T = 12)
-		"rjmp .+0\n\t"        // 2      nop nop         (T = 14)
-		"rjmp .+0\n\t"        // 2      nop nop         (T = 16)
-		"rjmp .+0\n\t"        // 2      nop nop         (T = 18)
-		"rjmp .+0\n\t"        // 2      nop nop         (T = 20)      0
-		);
+	sei();
 }
 
+void Pixzero() {
+	cli();
+	PINB |= (1 << 0); 
+	//asm volatile(
+	//"nop\n\t"
+	////"rjmp . + 0\n\t"
+	//	);
+	PINB |= (1 << 0);
+	PORTB &= ~(1 << 0);
+	//asm volatile(
+	//	//"rjmp . + 0\n\t"
+	//	//"rjmp . + 0\n\t"
+	//	//"rjmp . + 0\n\t"
+	//	//"rjmp . + 0\n\t"
+	//	//"rjmp . + 0\n\t"
+	//	"rjmp . + 0\n\t"
+	//	"nop\n\t"
+	//	);
+	sei();
+}
 
 void Animatie() {
 	GPIOR0 ^= (1 << 0);
@@ -118,9 +159,9 @@ void Animatie() {
 	}
 	else {
 		for (byte i = 0; i < AantalPix; i++) {
-			byte _red =  0;
-			byte _green =255;
-			byte _blue = 0;
+			byte _red = 10; // random(1, 10);
+			byte _green =0; // random(1, 10);
+			byte _blue = 0; // random(1, 10);
 
 			pix[i].r = _red;
 			pix[i].g = _green;
@@ -128,6 +169,7 @@ void Animatie() {
 		}
 	}
 	//FastLED.show();
+	//Serial.print(pix[1].r);
 	Pix_show();
 }
 
@@ -149,16 +191,16 @@ void Pix_show() {
 				break;
 			}
 
-			for (byte b = 0; b < 8; b++) { //b=bit de 8 bits van een kleur byte
+			for (byte b = 7; b < 8; b--) { //b=bit de 8 bits van een kleur byte
 
 				if (_byte & (1 << b))
 				{
-					Pix_one();
-					//Pix_zero();
+					Pixone();
+					//Pixzero();
 				}
 				else
 				{
-					Pix_zero();
+					Pixzero();
 				}
 			}
 
