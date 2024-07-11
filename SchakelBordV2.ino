@@ -33,6 +33,10 @@
 
 #define Aantalpreamples 12
 
+#define txt_alles "alles"
+#define txt_adres "adres"
+
+
 
 Adafruit_SSD1306 dp(128, 64, &Wire, -1); //constructor display  takes program 9598bytes; memory  57bytes
 
@@ -45,7 +49,13 @@ Adafruit_SSD1306 dp(128, 64, &Wire, -1); //constructor display  takes program 95
 	// 
 	// 
 	// 
-//GPIOR1  bit0=keuze program, bit1=keuze program bit7=factory reset bevesting; bit 6 reset adres false of reset all true
+//GPIOR1  
+// bit0=keuze program, 
+// bit1=keuze program 
+// bit4=een schakelaar, request update smartleds
+// bit 6 reset adres false of reset all true
+// bit7=factory reset bevesting; 
+// 
 //GPIOR2 te gebruiken als private variable binnen een void
 
 
@@ -77,7 +87,9 @@ String txt;
 String txtbovenbalk;
 
 //public variables
-//byte shiftbyte[2]; //de bytes die in de shiftregisters worden geschoven
+byte Reg; //EEprom 5
+//bit0= smartleds true RGB false=GRB 
+
 byte shiftcount = 0; //welke van de 10 switch lijnen wordt getest
 byte comlast[10]; //Laatst bekende stand van de schakelaar
 unsigned long slowtime;
@@ -93,7 +105,7 @@ byte switchgroup[2]; //welke groups zijn gekoppeld aan S1~S8 EEPROM 10, in theor
 byte dcctimer; //om een 10ms event te maken voor de puls of wisselstraat timers
 byte lastbutton = 1; //welke van de S1~S8 is het laatst ingedrukt
 byte lastset = 0; //welke switch groep van 4 is het laatste ingedrukt
-byte cursor = 0; byte submenu = 0;
+byte cursor = 0; byte para = 0;
 
 //decoder
 unsigned long RXtime;
@@ -102,6 +114,7 @@ byte RXbytecount = 0;
 byte RXdata[3]; //hier worden de ontvangen adresbyte, instructie byte en checksum tijdelijk  opgeslagen
 byte RXpreample = 0;
 byte RXfase = 0;
+byte Pixcount = 0; //verversen als nodig van de smartleds 
 
 //temps
 unsigned int counttrue = 0;
@@ -149,7 +162,8 @@ void setup() {
 	DDRD &= ~(240 << 0);
 	DDRD &= ~(1 << 3); PORTD |= (1 << 3); //pin kort as input met pullup
 	PORTD |= (240 << 0); //pull ups 3~7 (D4~D7)
-	DDRB |= (62 << 0); //pins 9,10,11,12,13 as outputs
+	DDRB |= (63 << 0); //pins 8,9,10,11,12,13 as outputs
+
 	PORTB |= (1 << 5); //set pin 13 hoog DCC enabled??
 
 	//Lees EEPROM
@@ -159,6 +173,7 @@ void setup() {
 	Init();
 }
 void Eepromread() {
+
 
 	byte _default = EEPROM.read(1);
 	delay(100);
@@ -174,12 +189,14 @@ void Eepromread() {
 
 		}
 		Eepromwrite();
-
 	}
 	else {
 		//waardes terug lezen
+		Reg = EEPROM.read(5);
 		switchgroup[0] = EEPROM.read(10);
 		switchgroup[1] = EEPROM.read(11);
+
+
 
 		for (byte i = 0; i < 16; i++) {
 			dekoder[i].adres = EEPROM.read(200 + (i * 4) + i);
@@ -190,6 +207,7 @@ void Eepromread() {
 void Eepromwrite() {
 
 	EEPROM.update(1, 0);
+	EEPROM.update(5, Reg); //default =0xFF
 
 	for (byte i = 0; i < 2; i++) {
 		EEPROM.update(10 + i, switchgroup[i]);
@@ -247,6 +265,7 @@ void Init() {
 
 	dp.clearDisplay();
 	DP_bedrijf();
+	PixShow();
 }
 void loop() {
 	//slowevent counter
@@ -255,6 +274,15 @@ void loop() {
 		Shift();
 		if (dccfase == 0) DCC_exe();
 		DCC_timer();
+
+		//update smartleds
+		Pixcount++;
+		if (Pixcount == 0) {
+			if (GPIOR1 & (1 << 4)) {
+				PixShow();
+				GPIOR1 &= ~(1 << 4);
+			}
+		}
 
 		//counttemp++;
 		//if (counttemp > 1000) { //2 seconden			
@@ -323,7 +351,7 @@ void RX(bool _bit) {
 		break;
 
 	case 1: //preample ontvangen wacht op een false (start) bit
-		if (! _bit) {  //Start bit ontvangen 
+		if (!_bit) {  //Start bit ontvangen 
 			RXfase = 2;
 			RXbitcount = 7;
 		}
@@ -342,7 +370,7 @@ void RX(bool _bit) {
 
 	case 3:
 		if (_bit) { //kan niet hier moet een nul bit komen
-			RX_start();			
+			RX_start();
 		}
 		else {
 			RXfase = 4;
@@ -368,8 +396,8 @@ void RX(bool _bit) {
 			RX_start();
 		}
 		else {
-				RXfase = 6;
-				RXbitcount = 7;		
+			RXfase = 6;
+			RXbitcount = 7;
 		}
 		break;
 
@@ -414,7 +442,7 @@ void RX_start() {
 void RX_command() {
 	//verwerkt een ontvangen packet 
 	//filters
-	
+
 	if (RXdata[0] < 255) { //idle packet filter
 
 		byte _buffer = DCC_findbuffer(); //zoek een vrije buffer
@@ -553,7 +581,6 @@ void DCC_command(byte _dec, byte _chan, bool _onoff) { //_onoff knop ingedrukt o
 			buffer[_buffer].data[1] |= (1 << 0);
 			break;
 		}
-
 	}
 	else { //Dual mode
 
@@ -688,6 +715,131 @@ void DP_debug(byte _n1, byte _n2) {
 	dp.print(_n2);
 	dp.display();
 }
+//smartleds
+
+void PixShow() {
+	//stuurt de WS281x pixels aan op de leds aansluiting
+	byte _kleur; //1=grijs 2=rood 3=groen
+	byte _pix;
+
+	for (byte d = 0; d < 16; d++) { //d=decoder 
+		for (byte c = 0; c < 4; c++) { //c=channel
+			if (dekoder[d].stand & (1 << (c + 4))) { //stand bekend
+				if (dekoder[d].stand & (1 << c)) { //stand aan
+					_kleur = 2;
+				}
+				else { //stand uit
+					_kleur = 3;
+				}
+			}
+			else { //stand niet bekend
+				_kleur = 1;
+			}
+
+			//kleur vertalen en versturen 3 bytes 24bits
+			for (byte color = 0; color < 3; color++) { //de 3 bytes die de kleur bepalen 1 voor 1
+				switch (_kleur) {
+				case 1: //grijs de 3 kleuren gelijk
+					_pix = 2;
+					break;
+
+				case 2://rood
+					switch (color) { //de _kleur bepaald de waarde van de 3 bytes r,g,b
+					case 0: //red  //dit moet gewisseld kunnen worden voor ver 2 types ws2811 
+
+						if (Reg & (1 << 0)) { //RGB of GRB
+						_pix = 100;
+						}
+						else {
+							_pix = 0;
+						}
+
+						break;
+					case 1: //green //wisselen met red instelbaar
+						if (Reg & (1 << 0)) { //RGB of GRB
+							_pix = 0;
+						}
+						else {
+							_pix = 100;
+						}
+						break;
+					case 2: //blue
+						_pix = 0;
+						break;
+					}
+					break;
+
+				case 3://groen
+					switch (color) {
+					case 0: //red
+						_pix = 0;
+						break;
+					case 1: //green
+						_pix = 100;
+						break;
+					case 2: //blue
+						_pix = 0;
+						break;
+					}
+					break;
+				}
+
+				//byte _pix nu versturen
+				for (byte i = 7; i < 8; i--) {
+					if (_pix & (1 << i)) { //true bit
+						Pixone();
+					}
+					else { //false bit
+						Pixzero();
+					}
+				}
+			}
+		}
+	}
+}
+
+void Pixone() {
+	cli();
+	PINB |= (1 << 0);
+	asm volatile(
+		"rjmp . + 0\n\t"
+		"rjmp . + 0\n\t"
+		"rjmp . + 0\n\t"
+		"rjmp . + 0\n\t"
+		);
+	PINB |= (1 << 0);
+	PORTB &= ~(1 << 0);
+	asm volatile(
+		//	"rjmp . + 0\n\t"
+		//	"rjmp . + 0\n\t"
+		//	"rjmp . + 0\n\t"
+		//	"rjmp . + 0\n\t"
+		"nop\n\t"
+		);
+	sei();
+}
+
+void Pixzero() {
+	cli();
+	PINB |= (1 << 0);
+	//asm volatile(
+	//"nop\n\t"
+	////"rjmp . + 0\n\t"
+	//	);
+	PINB |= (1 << 0);
+	PORTB &= ~(1 << 0);
+	//asm volatile(
+	//	//"rjmp . + 0\n\t"
+	//	//"rjmp . + 0\n\t"
+	//	//"rjmp . + 0\n\t"
+	//	//"rjmp . + 0\n\t"
+	//	//"rjmp . + 0\n\t"
+	//	"rjmp . + 0\n\t"
+	//	"nop\n\t"
+	//	);
+	sei();
+}
+
 //switches
 void SW_exe() {
 	byte _changed = 0;
@@ -722,6 +874,7 @@ void SW_exe() {
 void SW_div(byte _sw, bool _onoff) {
 	//zet de schakelaar mutaties om naar 11 on-board switches. En naar schakelmutaties verdeeld over 16 'decoders'
 	//elk met 4 channels. Alles met een ingedrukt en losgelaten trigger. scrollen van de 8 on-board switches nog niet gemaak. 29mei2024
+	GPIOR1 |= (1 << 4); //zet flag voor update smartleds
 	byte _ch = 0;
 	byte _dec = 0;
 	switch (shiftcount) {
@@ -775,6 +928,7 @@ void SW_button(byte _button, bool _onoff) {
 			}
 			Eepromwrite();
 			cursor = 0;
+			para = 0;
 		}
 		break;
 
@@ -976,10 +1130,13 @@ void SW_common(byte _button, bool _onoff) {
 
 	case 5: //S3
 		switch (cursor) {
-		case 0: //Wisselstraat
+		case 0: //niet bekend nog
 			break;
-		case 2:
+
+		case 2: //instellingen smartleds
+			if (para > 0)para--;  //verzet de cursor in deze instelling groep
 			break;
+
 		case 3: //toggle tussen dcc rest of all reset
 			GPIOR1 ^= (1 << 6);
 			break;
@@ -988,23 +1145,49 @@ void SW_common(byte _button, bool _onoff) {
 
 	case 6: //S4
 		switch (cursor) {
-		case 0: //wisselstraat
+		case 0: //nog in te vullen
 			break;
-		case 2:
+		case 2: //instellingen smartleds
+			if (para < 3)para++; //verplaatse cursor in deze groep.
 			break;
+
 		case 3: //toggle tussen dcc rest of all reset
 			GPIOR1 ^= (1 << 6);
 			break;
 		}
 		break;
+
 	case 9:
-		if (GPIOR1 & (1 << 7)) {
-			Factory();
+		switch (cursor) {
+		case 2: //instellen smartleds
+			switch (para) {
+			case 0: //instellen RGB of GRB
+				Reg |=(1 << 0);
+				break;
+			}
+			break;
+		case 3:
+			if (GPIOR1 & (1 << 7)) {
+				Factory();
+				break;
+			}
 		}
+
 		break;
 	case 10:
+		switch (cursor) {
+		case 2: //instellen smartleds
+			switch (para) {
+			case 0: //RGB of GRB
+				Reg &= ~(1 << 0);
+				break;
+			}
+			break;
+		case 3:
 		GPIOR1 ^= (1 << 7);
-		break;
+			break;
+		}
+		break;  //voor case 10 
 	}
 	DP_common();
 }
@@ -1273,26 +1456,46 @@ void DP_common() {
 	byte  _color = 0;
 	//tekend de common instellingen
 	dp.clearDisplay();
+	dp.fillRect(0, 0, 128, 14, 1);
+	dp.setCursor(10, 2);
+	dp.setTextColor(0);
+	dp.setTextSize(1);
 	switch (cursor) {
-	case 0: //Wisselstraat
-		dp.setCursor(5, 25);
-		dp.setTextColor(1);
-		dp.setTextSize(1);
-		dp.print("Wisselstraat");
+	case 0: // algemene booleans
+		dp.println(F("komt nog"));
 		break;
 
-	case 1:
+	case 2:
+		dp.println(F("Instellingen Leds"));
+		//cursor=instelling groep, para is de instelling in deze groep
+		if (para == 0) {
+			dp.fillRect(10, 18, 40, 18, 1);
+			dp.setTextColor(0);
+		}
+		else {
+			dp.drawRect(10, 18, 40, 18, 0);
+			dp.setTextColor(1);
+		}
+		dp.setTextSize(2);
+		dp.setCursor(12, 20);
+		if (Reg & (1 << 0)) {
+			dp.print("RGB");
+		}
+		else {
+			dp.print("GRB");
+		}
 		break;
+
 	case 3: //******************Factory reset
-		dp.fillRect(0, 0, 128, 14, 1);
-		dp.setCursor(10, 2);
-		dp.setTextColor(0);
-		dp.setTextSize(1);
+		//dp.fillRect(0, 0, 128, 14, 1);
+		//dp.setCursor(10, 2);
+		//dp.setTextColor(0);
+		//dp.setTextSize(1);
 		dp.println("Reset");
 
 		if (GPIOR1 & (1 << 7)) {
 			dp.fillRect(5, 20, 81, 40, 0);
-			if (GPIOR1 & (1 << 6))	txt = "Alles?"; else  txt = "Adressen?";
+			if (GPIOR1 & (1 << 6))	txt = txt_alles; else  txt = txt_adres;  //"Adressen?";
 			dp.setTextSize(2);
 			dp.setTextColor(1);
 			dp.setCursor(7, 22);
@@ -1309,10 +1512,10 @@ void DP_common() {
 
 			if (GPIOR1 & (1 << 6)) dp.setTextColor(1); else dp.setTextColor(0);
 			dp.setCursor(7, 22);
-			dp.print("Adres");
+			dp.print(txt_adres);
 			if (GPIOR1 & (1 << 6)) dp.setTextColor(0); else dp.setTextColor(1);
 			dp.setCursor(7, 42);
-			dp.print("Alles");
+			dp.print(txt_alles);
 
 
 		}
