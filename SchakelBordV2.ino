@@ -130,6 +130,7 @@ byte Pixcount = 0; //verversen als nodig van de smartleds
 
 //wisselstraten
 byte wss; //welke wisselstraatset van 4 wisselstraten ?
+byte actiecount;
 
 //temps
 unsigned int counttrue = 0;
@@ -561,6 +562,29 @@ ISR(TIMER2_COMPA_vect) {
 void DCC_command(byte _dec, byte _chan, bool _onoff) { //_onoff knop ingedrukt of losgelaten
 	//maakt een command in de (command)buffers
 	//TIJDELIJK FF de offs eruit
+	byte _temp = 0;
+	//hier komt dus de opdracht binen van alle in bedrijf schakelingen.
+	//hier bepalen of het een individueel schakeling of een wisselstraat schakeling bepaald en daarnaar handelen.
+	//ook de signalering zit hier achter
+	//de bovenbalk ' welke knop is ingedrukt' aanduiding werkt nog wel. 	
+
+	//Wisselstraat of single bediening?
+	for (byte i = 0; i < Aantalwisselstraatsets; i++) { //.knop; bit0,1 knop 1~4    bit2,3,4 knopset 0~15  bit7=actief 
+		if (straat[i].knop & (1 << 7)) { //straat is actief
+			//bepaal knop set (dec)
+			_temp = straat[i].knop;
+			_temp = _temp << 2; _temp = _temp >> 4;
+			if (_dec == _temp) {
+				//deze set van 4 knoppen is dus ingesteld op wisselstraten,
+				//dit verder uitwerken.
+				return; //DCC_command niet verder uitvoeren.
+					
+				
+			}
+		}
+	}
+
+
 	byte _adres = dekoder[_dec].adres; //(adres 0~255)	
 	//bit4 true=switch aan/uit flipflop of false=momentary 
 	if (dekoder[_dec].reg & (1 << 4)) {
@@ -586,6 +610,8 @@ void DCC_command(byte _dec, byte _chan, bool _onoff) { //_onoff knop ingedrukt o
 	}
 
 	//hier de feitelijk command maken in de command buffers
+	// proberen dit in een aparte void te zetten.
+	// 
 	//vrije buffer zoeken
 	byte _buffer = DCC_findbuffer();
 	buffer[_buffer].data[0] = 128; // adresbyte B10 00 0000
@@ -955,11 +981,11 @@ void SW_button(byte _button, bool _onoff) {
 	byte _group;
 	byte _channel;
 	switch (_button) {
-	case 0:
+	case 0: //KNOP DCC
 		if (_onoff)PORTB ^= (1 << 5); //DCC on off
 		break;
 
-	case 1: //program algemene dingen
+	case 1: //KNOP program algemene dingen
 		if (_onoff) {
 			GPIOR1 &= ~(1 << 1);
 			GPIOR1 ^= (1 << 0);
@@ -974,10 +1000,11 @@ void SW_button(byte _button, bool _onoff) {
 			Eepromwrite();
 			cursor = 0;
 			para = 0;
+			actiecount = 0;
 		}
 		break;
 
-	case 2: //program inc individueel
+	case 2: //KNOP program inc individueel
 		if (_onoff) {
 			GPIOR1 &= ~(1 << 0);
 			GPIOR1 ^= (1 << 1);
@@ -995,13 +1022,13 @@ void SW_button(byte _button, bool _onoff) {
 		}
 		break;
 
-	default: //3~12		
+	default: //KNOPPEN S1~S8 (3~12)
 		if (GPIOR1 & (1 << 0)) {
-			//common prorgram mode
+			//common program mode
 			SW_common(_button, _onoff);
 		}
 
-		else if (GPIOR1 & (1 << 1)) {
+		else if (GPIOR1 & (1 << 1)) { //individueel program mode
 			if (_onoff == false)return; //alleen indrukken verwerken
 			_group = 0;
 			if (lastbutton > 4)_group = 1;
@@ -1165,33 +1192,32 @@ void SW_common(byte _button, bool _onoff) {
 	if (_onoff == false)return; //alleen on knop acties
 
 	switch (_button) {
-	case 3: //S1
+	case 3: //KNOP 1
 		if (cursor > 0) {
 			cursor--;
 			GPIOR1 &= ~(192 << 0); //reset bit 7,6
 		}
 		break;
-	case 4: //S2
+	case 4: //KNOP 2
 		if (cursor < 3) { cursor++; 	GPIOR1 &= ~(192 << 0); } //reset bits 7,6
 		break;
 
 	case 5: //SWITCH, knop 3
 		switch (cursor) {
-		case 0: //wisselstraten
-			switch (para) {
-			case 0: //keuze wisselstraat set van 4 
+		//case 0: //wisselstraten
+		//	switch (para) {
+		//	case 0: //keuze wisselstraat set van 4 
+		//		break;
+		//	}
+		//	break;
+		//case 1: //CV
+		//	break;
 
-				break;
-			}
-			break;
-		case 1: //CV
-			break;
+		//case 2: //instellingen
+		//	//if (para > 0)para--;  //verzet de cursor in deze instelling groep
+		//	break;
 
-		case 2: //instellingen smartleds
-			if (para > 0)para--;  //verzet de cursor in deze instelling groep
-			break;
-
-		case 3: //toggle tussen dcc rest of all reset
+		case 3: // Resets, toggle tussen dcc rest of all reset
 			GPIOR1 ^= (1 << 6);
 			break;
 		}
@@ -1199,20 +1225,20 @@ void SW_common(byte _button, bool _onoff) {
 
 	case 6: //S4 knop 4
 		switch (cursor) {
-		case 0: //wisselstraten
-			switch (para) {
-			case 0: //keuze wisselstraat set
+		//case 0: //wisselstraten
+		//	switch (para) {
+		//	case 0: //keuze wisselstraat set
 
-				break;
-			}
+		//		break;
+		//	}
 
-			break;
-		case 1: //CV
+		//	break;
+		//case 1: //CV
 
-			break;
+		//	break;
 
 		case 2: //instellingen smartleds
-			if (para < 3)para++; //verplaatse cursor in deze groep.
+		//	if (para < 3)para++; //verplaatse cursor in deze groep.
 			break;
 
 		case 3: //toggle tussen dcc rest of all reset
@@ -1225,16 +1251,28 @@ void SW_common(byte _button, bool _onoff) {
 		case 0: //Wisselstraat
 			if (para > 0)para--;
 			break;
-		}
+		case 1: //CV
+			break;
+		case 2: //instellingen
+			if (para>0 )para --; //verplaatse cursor
+			break;
+		}		//dp.fillRect(75, 27, 8, 2, 1); //streepje tussen set en knop
+
 		break;
 
 	case 8: //KNOP 6
 		switch (cursor) {
 		case 0: //wisselstraat
-			if (para < 4)para++;  //aantal arameters in het instellen van de wisselstraten
+			if (para < 8)para++;  //aantal arameters in het instellen van de wisselstraten
+			break;
+		case 1: //CV
+			break;
+		case 2: //algemene instellingen
+			if (para < 3)para++; //volgende parameter
 			break;
 		}
 		break;
+
 	case 9: //KNOP 7
 		switch (cursor) {
 		case 0: //wisselstraten
@@ -1251,15 +1289,40 @@ void SW_common(byte _button, bool _onoff) {
 				if (_temp > 0)_temp--;
 				WS_knopset(wss, _temp);
 				break;
-			case 3:
+			case 3: //keuze knop in deze set (1~4)
 				_temp = straat[wss].knop;
 				_temp &= ~(252 << 0);
 				if (_temp > 0) _temp--;
 				WS_knop(wss, _temp);
 				break;
+			case 4: //keuze actie in volgorde voor deze knop
+				if (actiecount > 0) actiecount--;
+				break;
+			case 5:
+				straat[wss].actie[actiecount] &= ~(1 << 7); //actie uit
+				break;
+			case 6: //keuze knopset dec.
+				_temp = straat[wss].actie[actiecount];
+				_temp = _temp << 1; _temp = _temp >> 4;
+				if (_temp > 0)_temp --;
+				_temp = _temp << 3;
+				straat[wss].actie[actiecount] &= ~(120 << 0);
+				straat[wss].actie[actiecount] += _temp;
+				break;
+			case 7: //keuze knop in de set 1~4
+				_temp = straat[wss].actie[actiecount];
+				_temp = _temp >> 1; 
+				_temp &= ~(252 << 0);
+				if (_temp > 0)_temp--; 
+				straat[wss].actie[actiecount] &= ~(6 << 0);//reset bits 1 en2 
+				_temp = _temp << 1;
+				straat[wss].actie[actiecount] += _temp;
+				break;
+			case 8: //Stand rechtdoor
+				straat[wss].actie[actiecount] &= ~(1 << 0); //zet stand rechtdoor
+				break;
+
 			}
-
-
 			break;
 		case 1: //CV 
 			break;
@@ -1301,6 +1364,36 @@ void SW_common(byte _button, bool _onoff) {
 				if (_temp < 3)_temp++;
 				WS_knop(wss, _temp);
 				break;
+
+			case 4: //keuze actie 1~8
+				if (actiecount < 7) actiecount++;
+				break;
+			case 5: //actie aanzetten
+				straat[wss].actie[actiecount] |= (1 << 7);
+				break;
+			case 6: //keuze knop set 1~16 inc.
+				_temp = straat[wss].actie[actiecount];
+				_temp = _temp << 1; _temp = _temp >> 4;
+				if (_temp < 15)_temp ++;
+
+				//actiebyte aanpassen
+				straat[wss].actie[actiecount] &= ~(120 << 0); //reset bits 6~3
+				_temp = _temp << 3;
+				straat[wss].actie[actiecount] += _temp;
+				break;
+			case 7: //keuze knop 1~4 in knopset
+				_temp = straat[wss].actie[actiecount];
+				_temp = _temp >> 1;
+				_temp &= ~(252 << 0); //resets, clear bit 7~2
+				if (_temp < 3)_temp++;
+				straat[wss].actie[actiecount] &= ~(6 << 0); //reset bits 1 en 2
+				_temp = _temp << 1;
+				straat[wss].actie[actiecount] += _temp;
+				break;
+			case 8: //zet stand afslaand
+				straat[wss].actie[actiecount] |= (1 << 0);
+				break;
+
 			}
 			break;
 			////**********************************************CV
@@ -1337,7 +1430,6 @@ void SW_bedrijf(byte _button, bool _onoff) {
 	}
 
 	DCC_command(_group, _channel - 1, _onoff); //channel = hier 1~4
-
 
 	if (_onoff)TXT_bovenbalk(_button, _group, _channel);			//alleen bij indrukken knop tonen in de bovenbalk, niet het loslaten
 	DP_bedrijf();
@@ -1610,16 +1702,16 @@ void DP_common() {
 		//**** Is deze wisselstraat set in gebruik?
 		_temp = 1;
 		if (para == 1) {
-			dp.fillRect(31, 18, 15, 15, 1); //teken een wit rechthoek
+			dp.fillRect(31, 19, 15, 15, 1); //teken een wit rechthoek
 			_temp = 0;
 		}
 		if (straat[wss].knop & (1 << 7)) {
 			//gesloten circel
-			dp.fillCircle(38, 25, 5, _temp);
+			dp.fillCircle(38, 26, 5, _temp);
 		}
 		else {
 			//open rondje
-			dp.drawCircle(38, 25, 5, _temp);
+			dp.drawCircle(38, 26, 5, _temp);
 		}
 
 
@@ -1646,12 +1738,10 @@ void DP_common() {
 		}
 		dp.print(_temp + 1); //wss=wisselstraat set	
 
-		dp.setCursor(75, 20);
-		dp.setTextColor(1);
-		dp.print("-");
+		dp.fillRect(75, 27, 8, 2, 1); //streepje tussen set en knop
 
 		if (para == 3) { //Welke van de 4 knoppen
-			dp.fillRect(85, 18, 18, 20, 1);
+			dp.fillRect(85, 18, 17, 20, 1);
 			dp.setTextColor(0);
 		}
 		else {
@@ -1662,11 +1752,93 @@ void DP_common() {
 		_temp &= ~(252 << 0); //reset bits 7~2
 		dp.print(_temp + 1);
 
+		//tweede regel, bit0=stand(port) bit1,2 channel bit 3,4,5,6 knopset 0~15 bit7 actie actief
+		if (para == 4) { //nummer, volgorde acties 1~8
+			dp.fillRect(10, 40, 20, 18, 1);
+			dp.setTextColor(0);
+		}
+		else {
+			dp.setTextColor(1);
+		}
+
+		dp.setTextSize(2);
+		dp.setCursor(14, 42);
+		dp.print(actiecount + 1);
+
+
+		if (para == 5) { //deze actie aan of uit?
+			dp.fillRect(31, 42, 15,15 , 1);
+			_temp = 0;
+		}
+		else {
+			_temp = 1;
+		}
+		if (straat[wss].actie[actiecount] & (1 << 7)) {
+			dp.fillCircle(38, 49, 5, _temp);
+		}
+		else {
+			dp.drawCircle(38, 49, 5, _temp);
+		}
+
+		if (para == 6) { //schakelaar set en channel 
+			dp.fillRect(48, 40, 26, 18, 1);  //48, 18, 26, 18, 1);
+			dp.setTextColor(0);
+		}
+		else {
+			dp.setTextColor(1);
+		}
+		dp.setTextSize(2);
+		_temp = straat[wss].actie[actiecount]; //bit 3,4,5,6, = knopset 1~16
+		_temp = _temp << 1; _temp = _temp >> 4;
+		if (_temp > 8) {
+		dp.setCursor(50, 42);
+		}
+		else {
+			dp.setCursor(62, 42);
+		}
+		dp.print(_temp+1);
+		dp.fillRect(75, 47, 8, 2, 1); //streepje tussen set en knop
+
+		//knop
+		if (para == 7) {
+			dp.fillRect(85, 40, 17, 18, 1);
+			dp.setTextColor(0);
+		}
+		else {
+			dp.setTextColor(1);
+		}
+		_temp = straat[wss].actie[actiecount];
+		_temp = _temp >> 1;
+		_temp &= ~(252 << 0);
+
+		dp.setTextSize(2); //waarschijnlijk kan dit weg straks
+		dp.setCursor(88, 42);
+		dp.print(_temp + 1);
+
+		// stand van het accessory
+		if (para == 8) {
+			dp.fillRect(100, 40, 24,18,1);
+			_temp = 0;
+		}
+		else {
+			_temp = 1;
+		}
+		if (straat[wss].actie[actiecount] & (1 << 0)) {
+			dp.drawRect(102, 52, 18, 4, _temp);
+			dp.drawLine(102, 54, 118, 45, _temp);
+			dp.drawLine(102, 53, 118, 44, _temp);
+			dp.drawLine(102, 52, 118, 43, _temp);
+			dp.drawLine(102, 51, 118, 42, _temp);
+		}
+		else {
+			dp.fillRect(102, 52, 18, 4, _temp);
+			dp.drawLine(102, 54, 119, 45, _temp);
+			dp.drawLine(102, 51, 118, 42, _temp);
+		}
+
 
 
 		break;
-
-
 		//***CV**********
 	case 1:
 		dp.print(F("CV"));
