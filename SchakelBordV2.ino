@@ -63,7 +63,7 @@ Adafruit_SSD1306 dp(128, 64, &Wire, -1); //constructor display  takes program 95
 
 //structs
 struct DccBuffer {
-	byte delay;
+	int16_t delay;
 	byte repeat;
 	byte data[2]; //alleen standaard 3-bytes packets  0=adresbyte 1=instruction byte (2=checksum)
 };
@@ -88,10 +88,10 @@ Dekoder dekoder[16];
 //wisselstraten
 byte wss; //welke wisselstraatset van 4 wisselstraten ?
 byte actiecount;
-byte WS[Aantalwisselstraatsets]; //bit0,1 knop 1~4    bit2,3,4 knopset 0~15  bit7=actief 
+byte WS[Aantalwisselstraatsets]; //bit0,1 knop 1~4    bit2,3,4,5 knopset 0~15  bit7=actief 
 //[gekozen wisselstraatset][4]=aantal knoppen in de knop set [8]=aantalacties in een wisselstraat
-byte WSactie[Aantalwisselstraatsets][4][AantalWisselstraatacties]; //bit0=stand(port) bit1,2 channel bit 3,4,5,6 knopset 0~15 
-
+byte WSactie[Aantalwisselstraatsets][4][AantalWisselstraatacties]; //bit0=stand(port) bit1,2 channel bit 3,4,5,6 knopset 0~15 bit7=aan/uit, actief
+byte WSdelay; //periode tussen twee acties in een wisselstraat, voorlopig even instellen in init()
 
 String txt;
 String txtbovenbalk;
@@ -189,6 +189,7 @@ void setup() {
 void Eepromread() {
 	byte _pos;
 	Reg = EEPROM.read(5);
+	WSdelay = 25; //voorlopig even een vaste waarde
 
 	//wisselstraten 
 	for (byte i = 0; i < Aantalwisselstraatsets; i++) {
@@ -309,6 +310,7 @@ void Init() {
 	GPIOR0 = 0; GPIOR1 = 0; GPIOR2 = 0; //reset general purpose registers
 	cursor = 0;
 	lastbutton = 1;
+
 
 	PORTB |= (1 << 3); //serial pin hoog
 	for (byte i = 0; i < 16; i++) {
@@ -611,11 +613,13 @@ void DCC_command(byte _dec, byte _chan, bool _onoff) { //_onoff knop ingedrukt o
 		if (_onoff)DCC_Straat(_dec, _chan, _wss); //alleen als knop ingedrukt is. Bij false geen actie verder
 	}
 	else {
+		WS_reset(_dec, _chan); //reset de indicatie van de straat als een actie apart  wordt geschakeld
 		DCC_Single(_dec, _chan, _onoff);
 	}
 }
 
-void Command_start(byte _buffer,  byte _dec, byte _chan) {
+void Command_adres(byte _buffer, byte _dec) {
+	//bepaald het adres
 	byte _adres = dekoder[_dec].adres;
 
 	buffer[_buffer].data[0] = 128; // adresbyte B10 00 0000
@@ -632,9 +636,43 @@ void Command_start(byte _buffer,  byte _dec, byte _chan) {
 	if (_adres > 0) { buffer[_buffer].data[0] |= (1 << 0); }
 
 }
+void WS_reset(byte _dec, byte _chan) {
+	//onderstaand ingewikkeld verhaal, eenvoudig om alle onderdelen met elkaar te verwarren, beste laat alle text staan.
+	//_dec en _chan zijn hier de ingedrukte knop.
+	//getest wordt of deze knop met zijn onderliggende verwijzing naar een accessory deel uitmaakt
+	//van een wisselstraatset. Dan moet de signalering van de wisselstraatset naar uit, omdat een van de 'wissels'
+	//omgezet is is immers de wisselstraat stand van de wissels niet meer goed. 
+	//23juli2024 volgens mij werkt het goed zo. 
+	//Een andere optie zou kunnen zijn om bij verversen van de smartleds te testen of de stand overeenkomt met de stand als
+	//aangegeven in de wisselstraat als een accessory daarin is opgenomen. Dit lijkt met nog complexer. Verder niet naar gekeken.
+
+	byte _actie; byte _actieset; byte _actiechan; byte _set;
+	//Als deze single bediening is voor een knop/channel die ook opgenomen is in een actie van wisselstraat 
+	//dan moet de stand van die wisselstraat naar 'uit' worden gezet.
+
+	for (byte wss = 0; wss < Aantalwisselstraatsets; wss++) { //teset alle wisselstraatsets
+		if (WS[wss] & (1 << 7)) { //wisselstraatset is aan, actief   
+			for (byte c = 0; c < 4; c++) { //c=channel, test de 4 knoppen in de knopset toegewezen aan de wisselstraatset
+				for (byte a = 0; a < AantalWisselstraatacties; a++) { //a=test de acties onder de knop c in de set aangewezen in de wisselstraat
+					_actie = WSactie[wss][c][a]; //bit0=stand(port) bit1,2 channel bit 3,4,5,6 knopset 0~15 bit7=aan/uit
+					if (_actie & (1 << 7)) { //actie is aan, actief
+						_actieset = _actie << 1; _actieset = _actieset >> 4; //isoleer de knopset van deze actie
+						_actiechan = _actie << 5; _actiechan = _actiechan >> 6; //isoleer bit 1,2 channel,knop uit de knopset, in de actie
+
+						if (_dec == _actieset && _chan==_actiechan) { //test of de ingedrukt knop(set) overeenkomt met de knopset in de actie.
+
+								_set = WS[wss]; //bepaal de knopset en channel waarvan de stand naar uit moet, //bit0,1 knop 1~4    bit2,3,4,5 knopset 0~15  bit7=actief 
+								_set = _set << 2, _set = _set >> 4; //isoleer decoder , knopset
+								dekoder[_set].stand &= ~(1 << c); //reset de stand van de knop ingesteld op deze wisselstraat
+						}
+					}
+				}		 //for acties		
+			}  //for channel even versimpeld om uit te vogelen waarom alleen c=0 werkt...(opgelost c moest worden gebruikt in: dekoder[_set].stand &= ~(1 << c); niet _actiechan
+		}
+	}
+}
 
 void DCC_Single(byte _dec, byte _chan, bool _onoff) {
-
 	byte _adres = dekoder[_dec].adres; //(adres 0~255)	
 	//bit4 true=switch aan/uit flipflop of false=momentary 
 	if (dekoder[_dec].reg & (1 << 4)) {
@@ -658,7 +696,7 @@ void DCC_Single(byte _dec, byte _chan, bool _onoff) {
 		dekoder[_dec].stand ^= (1 << _chan); //Toggle stand
 
 	}
-	
+
 	//vrije buffer zoeken
 	byte _buffer = DCC_findbuffer();
 
@@ -675,7 +713,7 @@ void DCC_Single(byte _dec, byte _chan, bool _onoff) {
 	//if (_adres > 1) { _adres -= 2; buffer[_buffer].data[0] |= (1 << 1); }
 	//if (_adres > 0) { buffer[_buffer].data[0] |= (1 << 0); }
 
-	Command_start(_buffer,_dec, _chan);
+	Command_adres(_buffer, _dec);
 
 	////single(1-2 3-4) of dual(1-4); 	// .reg  bit2-3 dual/mono mode B00/B01=dual B10=channels 1-2 B11=channels 3-4
 	if (dekoder[_dec].reg & (1 << 2)) {
@@ -722,8 +760,11 @@ void DCC_Single(byte _dec, byte _chan, bool _onoff) {
 	//overige 
 	buffer[_buffer].repeat = Aantalrepeats;
 	buffer[_buffer].delay = 0;
+	DCC_puls(_dec, _buffer, 0);
+}
 
-
+void DCC_puls(byte _dec, byte _buffer, int16_t _extradelay) {
+	//maakt een off command, merk op geldt weer voor de hele set switches
 	GPIOR2 = 0; //reset private temp variable
 	//continue of puls, bij puls een tweede buffer aanmaken; 	.reg bit0 - 1 timing 0 = continue 1 = 0.25 2 = 0.5 3 = 1sec
 	if (dekoder[_dec].reg & (1 << 0)) GPIOR2 |= (1 << 0);
@@ -737,22 +778,23 @@ void DCC_Single(byte _dec, byte _chan, bool _onoff) {
 		buffer[_bufferoff].data[1] = buffer[_buffer].data[1];
 		buffer[_bufferoff].data[1] &= ~(1 << 3); //clear onoff bit
 		buffer[_bufferoff].repeat = Aantalrepeats;
-
+		buffer[_bufferoff].delay = _extradelay;
 		switch (GPIOR2) {
 		case 1: //0.25s
-			buffer[_bufferoff].delay = 25;
+			buffer[_bufferoff].delay += 25;
 			break;
 		case 2: //0.5s
-			buffer[_bufferoff].delay = 50;
+			buffer[_bufferoff].delay += 50;
 			break;
 		case 3: //1s
-			buffer[_bufferoff].delay = 100;
+			buffer[_bufferoff].delay += 100;
 			break;
 		}
 	}
 }
 void DCC_Straat(byte _dec, byte _chan, byte _wss) {
-	byte _adres; byte _reg; //LETOP geen invert op een wisselstraat
+	byte _adres; byte _reg; byte _actie;
+	//LETOP geen invert op een wisselstraat
 	//hier komt de ingedrukte knop binnen, _dec is de knop set, _chan is de knop, _wss de gevonden wisselstraat
 	// de verwijzing van de knoppen op de module (S1~S8) is hier al in verwerkt. dus het is de verwezen knop die hier binnenkomt.
 	//in DCC straat is bepaald dat het om een wisselstraat bediening gaat. De niet-wisselstraat bedieningen gaan naar
@@ -765,37 +807,51 @@ void DCC_Straat(byte _dec, byte _chan, byte _wss) {
 
 	for (byte a = 0; a < AantalWisselstraatacties; a++) {
 		//hier _wss wisselstraatset gebruiken, niet _dec die verwijst naar de knopset die de wisselstraat activeert.
-		if (WSactie[_wss][_chan][a] & (1 << 7)) { 	//bit0=stand(port) bit1,2 channel bit 3,4,5,6 knopset 0~15 bit7=aan/uit
+		//_dec en _chan zijn verwijzingen naar de dekoder, knopset en channel (1~4) van de knop die de wisselstraat activeert
+		//_actiedec en _actiechan verwijst naar de knopset en chammel die in de actie is bepaald, de wissels die in de straat moeten worden omgezet.
+
+		_actie = WSactie[_wss][_chan][a];
+		if (_actie & (1 << 7)) { 	//bit0=stand(port) bit1,2 channel bit 3,4,5,6 knopset 0~15 bit7=aan/uit
 
 			//	actie is actief, uitvoeren
 			//dekoder[wss].adres;	//dekoder[wss].reg; 	//bit0-1 timing 0=continue 1=0.25 2=0.5 3=1sec; 	//bit2-3 dual/mono mode B00/B01=dual B10=channels 1-2 B11=channels 3-4; 	//bit4 switch aan/uit flipflop of momentary 
 			//bit5 invert ports; 	//bit6 nc; 	//bit7 hoog adres 256~511
 			//stand instellen //bit 0 van het WS byte
 
-			dekoder[_dec].stand |= (1 << (a + 4)); //stand als bekend zetten
-			//_invert = false; !!!!NEEN, invert werkt niet in een wisselstraat.
-			if (WSactie[_wss][_chan][a] & (1 << 0)) { //stand van de acc aangegeven in de actie			
-				dekoder[_dec].stand |= (1 << a);
+			byte _buffer = DCC_findbuffer(); //zoek een vrije buffer
+			//decoder bepalen van de accessoire aangewezen in de actie
+			byte _actiedec = _actie;
+			_actiedec = _actiedec << 1; _actiedec = _actiedec >> 4; //clear bits 7,2,1,0 isolate de decoder, de knopset
+			Command_adres(_buffer, _actiedec); //bepaal het adres			
+			buffer[_buffer].data[1] |= (1 << 3); //Stuur een on-command		
+
+			if (_actie & (1 << 0))buffer[_buffer].data[1] |= (1 << 0);	//port (recht of afslaand) bepalen en instellen toevoegen aan het command
+
+			//channel van de actie bepalen
+			byte _actiechan = _actie; _actiechan = _actiechan << 5; _actiechan = _actiechan >> 6; //clear bits 7,2,1,0 isolate het channel
+			_actiechan = _actiechan << 1;
+			buffer[_buffer].data[1] += _actiechan;
+
+			buffer[_buffer].repeat = Aantalrepeats;
+			//delay instellen
+			buffer[_buffer].delay = a * WSdelay; //tijd in stappen van 10ms
+			DCC_puls(_actiedec, _buffer, buffer[_buffer].delay); //maakt tweede off command na aflopen delay
+
+			//stand van de actie instellen 
+			_actiechan = _actiechan >> 1;
+			if (_actie & (1 << 0)) {
+				dekoder[_actiedec].stand |= (1 << _actiechan + 4); dekoder[_actiedec].stand |= (1 << _actiechan);
 			}
 			else {
-				dekoder[_dec].stand &= ~(1 << a);
+				dekoder[_actiedec].stand |= (1 << _actiechan + 4); dekoder[_actiedec].stand &= ~(1 << _actiechan);
 			}
-			byte _buffer = DCC_findbuffer(); //zoek een vrije buffer
-			Command_start(_buffer, _dec, _chan); 
-
-
 		}
-
 	}
-
-
-
-	//knop die wisselstraat bedient "aan"  zetten. Uit zetten gebeurt door omzetten van een van de wissels in de groep, vanaf een andere knop.
+	//knop die wisselstraat bedient "aan" zetten. Uit zetten gebeurt door omzetten van een van de wissels in de groep, vanaf een andere knop.
 	dekoder[_dec].stand |= (1 << _chan + 4);
 	dekoder[_dec].stand |= (1 << _chan);
-
-
 }
+
 byte DCC_findbuffer() {
 	byte _buffer;
 	//buffers eerst zoeken op 0 repeats , daarna op 1 repeats om aantal buffers te verdubbelen voordat er geen buffer wordt gevonden. 
@@ -811,8 +867,7 @@ byte DCC_findbuffer() {
 }
 void DCC_timer() {
 	dcctimer++;
-	if (dcctimer > 4) {  //clock van 10ms
-
+	if (dcctimer > 4) {  //clock van 10ms 
 		dcctimer = 0;
 		for (byte i = 0; i < Aantalbuffers; i++) {
 			if (buffer[i].delay > 0) {
