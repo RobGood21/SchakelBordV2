@@ -571,17 +571,18 @@ ISR(TIMER2_COMPA_vect) {
 		}
 	}
 }
-void WS_exe() {
-	byte _temp; byte _dec; byte _chan; bool _stand;
-	//byte WSactie[Aantalwisselstraatsets][4][8]; //bit0=stand(port) bit1,2 channel bit 3,4,5,6 knopset 0~15 
-	//byte WS[Aantalwisselstraatsets]; //bit0,1 knop 1~4    bit2,3,4 knopset 0~15  bit7=actief 
-	for (byte actie = 0; actie < 8; actie++) {
-		//bepaal welke knopset (_dec)
-		//bepaal welke knop in de set
-		//set stand deze knop, zoals bepaald in de actie
-		//stuur DCC command, adres(en puls en invert) uit bepaalde knopset en knop.
-	}
-}
+
+//void WS_exe() {
+//	byte _temp; byte _dec; byte _chan; bool _stand;
+//	//byte WSactie[Aantalwisselstraatsets][4][8]; //bit0=stand(port) bit1,2 channel bit 3,4,5,6 knopset 0~15 
+//	//byte WS[Aantalwisselstraatsets]; //bit0,1 knop 1~4    bit2,3,4 knopset 0~15  bit7=actief 
+//	for (byte actie = 0; actie < 8; actie++) {
+//		//bepaal welke knopset (_dec)
+//		//bepaal welke knop in de set
+//		//set stand deze knop, zoals bepaald in de actie
+//		//stuur DCC command, adres(en puls en invert) uit bepaalde knopset en knop.
+//	}
+//}
 
 void DCC_command(byte _dec, byte _chan, bool _onoff) { //_onoff knop ingedrukt of losgelaten
 	//maakt een command in de (command)buffers
@@ -653,17 +654,25 @@ void WS_reset(byte _dec, byte _chan) {
 	for (byte wss = 0; wss < Aantalwisselstraatsets; wss++) { //teset alle wisselstraatsets
 		if (WS[wss] & (1 << 7)) { //wisselstraatset is aan, actief   
 			for (byte c = 0; c < 4; c++) { //c=channel, test de 4 knoppen in de knopset toegewezen aan de wisselstraatset
-				for (byte a = 0; a < AantalWisselstraatacties; a++) { //a=test de acties onder de knop c in de set aangewezen in de wisselstraat
-					_actie = WSactie[wss][c][a]; //bit0=stand(port) bit1,2 channel bit 3,4,5,6 knopset 0~15 bit7=aan/uit
-					if (_actie & (1 << 7)) { //actie is aan, actief
-						_actieset = _actie << 1; _actieset = _actieset >> 4; //isoleer de knopset van deze actie
-						_actiechan = _actie << 5; _actiechan = _actiechan >> 6; //isoleer bit 1,2 channel,knop uit de knopset, in de actie
+				//uiteindelijke doel is de smartled uit te zetten indien nodig
+				//als de smartled al uit is is het hele volgende circus daarom niet nodig
+				_set = WS[wss]; //bepaal de knopset en channel waarvan de stand naar uit moet, //bit0,1 knop 1~4    bit2,3,4,5 knopset 0~15  bit7=actief 
+				_set = _set << 2, _set = _set >> 4; //isoleer decoder , knopset
 
-						if (_dec == _actieset && _chan==_actiechan) { //test of de ingedrukt knop(set) overeenkomt met de knopset in de actie.
+				if (dekoder[_set].stand & (1 << c)) { //de set is dus actief
 
-								_set = WS[wss]; //bepaal de knopset en channel waarvan de stand naar uit moet, //bit0,1 knop 1~4    bit2,3,4,5 knopset 0~15  bit7=actief 
-								_set = _set << 2, _set = _set >> 4; //isoleer decoder , knopset
-								dekoder[_set].stand &= ~(1 << c); //reset de stand van de knop ingesteld op deze wisselstraat
+					for (byte a = 0; a < AantalWisselstraatacties; a++) { //a=test de acties onder de knop c in de set aangewezen in de wisselstraat
+						_actie = WSactie[wss][c][a]; //bit0=stand(port) bit1,2 channel bit 3,4,5,6 knopset 0~15 bit7=aan/uit
+						if (_actie & (1 << 7)) { //actie is aan, actief
+							_actieset = _actie << 1; _actieset = _actieset >> 4; //isoleer de knopset van deze actie
+							_actiechan = _actie << 5; _actiechan = _actiechan >> 6; //isoleer bit 1,2 channel,knop uit de knopset, in de actie
+
+							if (_dec == _actieset && _chan == _actiechan) { //test of de ingedrukt knop(set) overeenkomt met de knopset in de actie.
+
+								//	_set = WS[wss]; //bepaal de knopset en channel waarvan de stand naar uit moet, //bit0,1 knop 1~4    bit2,3,4,5 knopset 0~15  bit7=actief 
+								//	_set = _set << 2, _set = _set >> 4; //isoleer decoder , knopset
+								dekoder[_set].stand &= ~(1 << c); //reset de stand van de knop ingesteld op deze wisselstraat						}
+							}
 						}
 					}
 				}		 //for acties		
@@ -845,6 +854,8 @@ void DCC_Straat(byte _dec, byte _chan, byte _wss) {
 			else {
 				dekoder[_actiedec].stand |= (1 << _actiechan + 4); dekoder[_actiedec].stand &= ~(1 << _actiechan);
 			}
+			//eventuele andere wisselstraten 'uit' zetten als deze straat een wissel uit deze andere set ook omlegd.
+			WS_reset(_actiedec, _actiechan);
 		}
 	}
 	//knop die wisselstraat bedient "aan" zetten. Uit zetten gebeurt door omzetten van een van de wissels in de groep, vanaf een andere knop.
