@@ -28,6 +28,7 @@
 #define TrueBit OCR2A = 115 //pulsduur true bit 115
 #define FalseBit OCR2A = 230 //pulsduur false  bit 230
 
+#define AantalDatabytes 6
 #define Aantalbuffers 20
 #define Aantalrepeats 4
 #define Aantalpreamples 12
@@ -119,6 +120,15 @@ byte lastbutton = 1; //welke van de S1~S8 is het laatst ingedrukt,
 
 byte lastset = 0; //welke switch groep van 4 is het laatste ingedrukt
 byte cursor = 0; byte para = 0;
+//CV programmer
+byte CVreg;
+// bit0=loco(false) of accessory(true; default) 
+//bit1 true animatie aan, false animatie uit
+int16_t CVadres = 1;
+int16_t CVnum = 0;  //10bits 
+byte CVval = 0; //8bits
+byte CVtimer = 0; //timer voor een animatie
+
 
 //decoder
 unsigned long RXtime;
@@ -190,6 +200,7 @@ void Eepromread() {
 	byte _pos;
 	Reg = EEPROM.read(5);
 	WSdelay = 25; //voorlopig even een vaste waarde
+	CVreg = 0xFF; //ook even een vaste waarde, misschien blijkt later opslag nodig te zijn.
 
 	//wisselstraten 
 	for (byte i = 0; i < Aantalwisselstraatsets; i++) {
@@ -330,9 +341,10 @@ void loop() {
 	if (millis() - slowtime > 1) {  //clock van 2ms 
 		slowtime = millis();
 		Shift();
+
 		if (dccfase == 0) DCC_exe();
 		DCC_timer();
-
+		CV_timer();
 		//update smartleds
 		Pixcount++;
 		if (Pixcount == 0) {
@@ -1376,7 +1388,34 @@ void SW_common(byte _button, bool _onoff) {
 
 	case 5: //SWITCH, knop 3
 		switch (cursor) {
-
+		case 1: //CV verzenden
+			switch (para) {
+			case 1: //adres
+				if ((CVadres > 10)) {
+					CVadres -= 10;
+				}
+				else {
+					CVadres = 1;
+				}
+				break;
+			case 2: //CVnummer
+				if (CVnum > 9) { //CVnum loopt van 0~1023 maar wordt getoond en gecommuniceerd in handleidingen als 1~1024
+					CVnum -= 10;
+				}
+				else {
+					CVnum = 0;
+				}
+				break;
+			case 3: //CVval
+				if (CVval > 9) {
+					CVval -= 10;
+				}
+				else {
+					CVval = 0;
+				}
+				break;
+			}
+			break;
 		case 3: // Resets, toggle tussen dcc rest of all reset
 			GPIOR1 ^= (1 << 6);
 			break;
@@ -1385,23 +1424,63 @@ void SW_common(byte _button, bool _onoff) {
 
 	case 6: //S4 knop 4
 		switch (cursor) {
+		case 1: //CVinstellen
+			switch (para) {
+			case 1: //adres instellen inc x 10
+				if (CVreg & (1 << 0)) { //acc
+					if ((CVadres + 10) > 511) {
+						CVadres = 511;
+					}
+					else {
+						CVadres += 10;
+					}
+				}
+				else { //loc
+					if ((CVadres + 10) > 127) {
+						CVadres = 127;
+					}
+					else {
+						CVadres += 10;
+					}
+				}
+				break;
+			case 2: //CVnummer
+				if (CVnum < 1013) {
+					CVnum += 10;
+				}
+				else {
+					CVnum = 1023;
+				}
+				break;
+			case 3: //CVval
+				if (CVval < 117) {
+					CVval += 10;
+				}
+				else {
+					CVval = 127;
+				}
+				break;
+			}
+			break;
 		case 3: //toggle tussen dcc rest of all reset
 			GPIOR1 ^= (1 << 6);
 			break;
 		}
 		break;
 	case 7:  //KNOP 5
+		//if (para > 0)para--; //is meer program geheugen waarom??? heeft van doen met code optimalisatie
+		
 		switch (cursor) {
 		case 0: //Wisselstraat
 			if (para > 0)para--;
 			break;
 		case 1: //CV
+			if (para > 0)para--;
 			break;
 		case 2: //instellingen
 			if (para > 0)para--; //verplaatst cursor
 			break;
-		}		//dp.fillRect(75, 27, 8, 2, 1); //streepje tussen set en knop
-
+		}
 		break;
 
 	case 8: //KNOP 6
@@ -1410,6 +1489,7 @@ void SW_common(byte _button, bool _onoff) {
 			if (para < 8)para++;  //aantal arameters in het instellen van de wisselstraten
 			break;
 		case 1: //CV
+			if (para < 4)para++;
 			break;
 		case 2: //algemene instellingen
 			if (para < 3)para++; //volgende parameter
@@ -1474,9 +1554,27 @@ void SW_common(byte _button, bool _onoff) {
 
 			}
 			break;
-		case 1: //CV 
+		case 1: //CV  //CV (reminder: indrukken knop 7 hier....)
+			switch (para) {
+			case 0: //loc of accessory
+				CVreg &= ~(1 << 0); //loc
+				CVadres = 3; //is default value for DCC decoders
+				CVnum = 0;
+				CVval = 3;
+				break;
+			case 1: //adres
+				if (CVadres > 1)CVadres--;
+				break;
+			case 2:
+				if (CVnum > 0)CVnum--;
+				break;
+			case 3:
+				if (CVval > 0)CVval--;
+				break;
+			}
+
 			break;
-		case 2: //instellen smartleds
+		case 2: //instellingen
 			switch (para) {
 			case 0: //instellen RGB of GRB
 				Reg |= (1 << 0);
@@ -1489,7 +1587,6 @@ void SW_common(byte _button, bool _onoff) {
 				break;
 			}
 		}
-
 		break;
 
 	case 10:  //KNOP 8
@@ -1554,7 +1651,32 @@ void SW_common(byte _button, bool _onoff) {
 			}
 			break;
 			////**********************************************CV
-		case 1: //CV
+		case 1: //CV (reminder: indrukken knop 8 hier....)
+			switch (para) {
+			case 0:
+				CVreg |= (1 << 0); //accessories
+				CVadres = 1;
+				CVnum = 0;
+				CVval = 0;
+				break;
+			case 1: //adres
+				if (CVreg & (1 << 0)) { //accessory
+					if (CVadres < 511)CVadres++;
+				}
+				else { //mfd loc alleen kort adres mogelijk
+					if (CVadres < 127)CVadres++;
+				}
+				break;
+			case 2: //CVnum
+				if (CVnum < 1023)CVnum++;
+				break;
+			case 3: //CVval
+				if (CVval < 127)CVval++;
+				break;
+			case 4:  //verzenden CV
+				CV_exe();
+				break;
+			}
 			break;
 		case 2: //instellen smartleds
 			switch (para) {
@@ -1569,8 +1691,48 @@ void SW_common(byte _button, bool _onoff) {
 		}
 		break;  //voor case 10 
 	}
-	DP_common();
+	if(CVreg & (1 << 1)) DP_common(); //niet als bevestiging CV zenden aan is.
 }
+
+void CV_exe() {	
+	CV_ani();//display aanpassen om duidelijk te maken dat er iets wordt verzonden
+	//Onlogisch om verzendingen uit de buffers te verwachten als je met CV's bezig bent.
+	//wel is via de dcc-in ontvangen commands mogelijk, dit misschien blokkeren met een extra bit
+	//in CVreg maar eerst maar eens zonder.
+	
+	for (byte i = 0; i < AantalDatabytes; i++) { //clear data bytes te verzenden
+		dccdata[i] = 0;
+	}
+
+	//databyte0, adresbyte
+
+
+
+	//start verzending
+	count_preample = 0;
+	dccfase = 1; 
+}
+void CV_ani() {
+	CVreg &= ~(1 << 1);
+	CVtimer = 0;
+	dp.fillCircle(64, 38, 24, 1);
+	dp.setCursor(56, 24); dp.setTextColor(0); dp.setTextSize(4); dp.print(">"); //kost 60bytes program mem
+	dp.display();
+}
+void CV_timer() {
+	//timed een animatie anders zie je als gebruiker niet dat je een CV aan het versturen bent
+	//called om de 2ms
+	if (~CVreg & (1 << 1)) {
+		if (CVtimer < 250) {
+			CVtimer++;
+		}
+		else {
+			CVreg |= (1 << 1);
+			DP_common();
+		}
+	}
+}
+
 void SW_bedrijf(byte _button, bool _onoff) {
 
 	byte _channel;
@@ -1838,7 +2000,7 @@ void DP_common() {
 
 	dp.clearDisplay();
 	dp.fillRect(0, 0, 128, 14, 1);
-	dp.setCursor(10, 2);
+	dp.setCursor(10, 4);
 	dp.setTextColor(0);
 	dp.setTextSize(1);
 	switch (cursor) {
@@ -2002,6 +2164,76 @@ void DP_common() {
 		//***CV**********
 	case 1:
 		dp.print(F("CV"));
+		//vaste teksten (scheelt program space)
+		dp.setTextColor(1);
+		//dp.setTextSize(1); //niet nodig
+		dp.setCursor(49, 25);
+		dp.print("adr");
+		dp.setCursor(2, 47);
+		dp.print("#");
+		dp.setCursor(60, 47);
+		dp.print("V");
+		dp.setTextSize(2);
+
+		if (para == 0) { //keuze tussen accessory(default) of loc
+			dp.fillRect(5, 18, 38, 20, 1);
+			dp.setTextColor(0);
+		}
+		else {
+			dp.setTextColor(1);
+		}
+		dp.setCursor(7, 20);
+
+		if (CVreg & (1 << 0)) {
+			dp.print("Acc");
+		}
+		else {
+			dp.print("Loc");
+		}
+		if (para == 1) { //adres te verzenden
+			dp.fillRect(68, 18, 50, 20, 1);
+			dp.setTextColor(0);
+		}
+		else {
+			dp.setTextColor(1);
+		}
+		//dp.setTextSize(2); //niet nodig
+		dp.setCursor(70, 20);
+		if (CVreg & (1 << 0)) { //acc
+			dp.print(1 + ((CVadres - 1) * 4)); //toon het dcc adres
+		}
+		else { //loc
+			dp.print(CVadres);
+		}
+		if (para == 2) { //CV nummer
+			dp.fillRect(8, 40, 50, 18, 1);
+			dp.setTextColor(0);
+		}
+		else {
+			dp.setTextColor(1);
+		}
+		//dp.setTextSize(2); //niet nodig
+		dp.setCursor(10, 42);
+		dp.print(CVnum + 1);
+		if (para == 3) { //CVval
+			dp.fillRect(68, 40, 40, 18, 1);
+			dp.setTextColor(0);
+		}
+		else {
+			dp.setTextColor(1);
+		}
+		dp.setCursor(70, 42);
+		//dp.setTextSize(2);  //niet nodig
+		dp.print(CVval);
+
+		if (para == 4) { //uitvoeren knop
+			dp.fillCircle(110, 48, 12, 1);
+			dp.setCursor(106, 41),
+				dp.setTextColor(0);
+			//dp.setTextSize(2); //niet nodig
+			dp.print(">");
+		}
+
 		break;
 
 	case 2:
@@ -2031,7 +2263,6 @@ void DP_common() {
 		//dp.setTextColor(0);
 		//dp.setTextSize(1);
 		dp.println("Reset");
-
 		if (GPIOR1 & (1 << 7)) {
 			dp.fillRect(5, 20, 81, 40, 0);
 			if (GPIOR1 & (1 << 6))	txt = txt_alles; else  txt = txt_adres;  //"Adressen?";
