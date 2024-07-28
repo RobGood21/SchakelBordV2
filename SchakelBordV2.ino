@@ -1395,7 +1395,12 @@ void SW_common(byte _button, bool _onoff) {
 					CVadres -= 10;
 				}
 				else {
-					CVadres = 1;
+					if (CVadres == 1) {
+						CVadres = 0; //maakt een BROADCAST command mogelijk
+					}
+					else {
+						CVadres = 1;
+					}
 				}
 				break;
 			case 2: //CVnummer
@@ -1453,11 +1458,11 @@ void SW_common(byte _button, bool _onoff) {
 				}
 				break;
 			case 3: //CVval
-				if (CVval < 117) {
+				if (CVval < 245) {
 					CVval += 10;
 				}
 				else {
-					CVval = 127;
+					CVval = 255;
 				}
 				break;
 			}
@@ -1469,7 +1474,7 @@ void SW_common(byte _button, bool _onoff) {
 		break;
 	case 7:  //KNOP 5
 		//if (para > 0)para--; //is meer program geheugen waarom??? heeft van doen met code optimalisatie
-		
+
 		switch (cursor) {
 		case 0: //Wisselstraat
 			if (para > 0)para--;
@@ -1671,7 +1676,7 @@ void SW_common(byte _button, bool _onoff) {
 				if (CVnum < 1023)CVnum++;
 				break;
 			case 3: //CVval
-				if (CVval < 127)CVval++;
+				if (CVval < 255)CVval++;
 				break;
 			case 4:  //verzenden CV
 				CV_exe();
@@ -1691,27 +1696,80 @@ void SW_common(byte _button, bool _onoff) {
 		}
 		break;  //voor case 10 
 	}
-	if(CVreg & (1 << 1)) DP_common(); //niet als bevestiging CV zenden aan is.
+	if (CVreg & (1 << 1)) DP_common(); //niet als bevestiging CV zenden aan is.
 }
 
-void CV_exe() {	
+void CV_exe() {
+	byte _bytecount = 1; int16_t _adres;
 	CV_ani();//display aanpassen om duidelijk te maken dat er iets wordt verzonden
 	//Onlogisch om verzendingen uit de buffers te verwachten als je met CV's bezig bent.
 	//wel is via de dcc-in ontvangen commands mogelijk, dit misschien blokkeren met een extra bit
 	//in CVreg maar eerst maar eens zonder.
-	
+
 	for (byte i = 0; i < AantalDatabytes; i++) { //clear data bytes te verzenden
 		dccdata[i] = 0;
 	}
+	//invullen databytes
+	_adres = CVadres;
+	if (CVreg & (1 << 0)) { //accessoire
 
-	//databyte0, adresbyte
+		//aantal databytes=adres-instruction(1AAA0000)-CV1-CV2-CV3-checksum =6 aantalbytes=5 (0,1,2,3,4,5,)
+		dccaantalBytes = 5;
 
-
+		dccdata[0] |= (1 << 7);
+		//3 extra adres bytes mogelijk
+		dccdata[1] |= (240 << 0); //set bit 7,6,5,4 adresbytes in one complement
+		//dccdata[1] bites 0,1,2,3 blijven 0000 alleen gehele decoder instelbaar CDDD
+		if (_adres > 255) {
+			dccdata[1] &= ~(1 << 6);
+			_adres -= 256;
+		}
+		if (_adres > 127) {
+			dccdata[1] &= ~(1 << 5);
+			_adres -= 128;
+		}
+		if (_adres > 63) {
+			dccdata[1] &= ~(1 << 4);
+			_adres -= 64;
+		}
+		_bytecount++;
+	}
+	else { //loc
+		//aantaldatabytes=adres-CV1-CV2-CV3-checksum =5 aantalbytes=4
+		dccaantalBytes = 4;
+		//alleen kort adres locs geen tweede (instructie)byte, direct door naar de CV bytes
+	}
+	dccdata[0] += _adres; //adres optellen bij eerste byte
+	//merk op de accessories hebben een byte meer dan locs, bij accessory byte opschuiven
+	//eerste CV byte 111 GGVV GG=(B)11 Write Byte VV=bit10,9 van het CV 10-bits
+	dccdata[_bytecount] = B11101100;
+	_adres = CVnum;
+	if (_adres > 511) {
+		dccdata[_bytecount] |= (1 << 1);
+		_adres -= 512;
+	}
+	if (_adres > 255) {
+		dccdata[_bytecount] |= (1 << 0);
+		_adres -= 256;
+	}
+	_bytecount++; //volgende 2e CV byte AAAAAAAA 
+	dccdata[_bytecount] = _adres;
+	_bytecount++; // volgende 3e CV byte VVVVVVVV (value)
+	dccdata[_bytecount] = CVval;
+	_bytecount++; //volgende byte checksum
+	_adres = dccdata[0]; //_adres hier even als temp byte gebruiken.
+	for (byte i = 1; i < _bytecount; i++) {
+		_adres = _adres ^ dccdata[i];
+	}
+	dccdata[_bytecount] = _adres;
 
 	//start verzending
 	count_preample = 0;
-	dccfase = 1; 
+	dccfase = 1;
+
+	//28jul2024 in een ideale wereld zou het nu moeten werken.
 }
+
 void CV_ani() {
 	CVreg &= ~(1 << 1);
 	CVtimer = 0;
@@ -2199,12 +2257,18 @@ void DP_common() {
 		}
 		//dp.setTextSize(2); //niet nodig
 		dp.setCursor(70, 20);
-		if (CVreg & (1 << 0)) { //acc
-			dp.print(1 + ((CVadres - 1) * 4)); //toon het dcc adres
+		if (CVadres == 0) {
+			dp.print("*BC*");
 		}
-		else { //loc
-			dp.print(CVadres);
+		else {
+			if (CVreg & (1 << 0)) { //acc
+				dp.print(1 + ((CVadres - 1) * 4)); //toon het dcc adres
+			}
+			else { //loc
+				dp.print(CVadres);
+			}
 		}
+
 		if (para == 2) { //CV nummer
 			dp.fillRect(8, 40, 50, 18, 1);
 			dp.setTextColor(0);
