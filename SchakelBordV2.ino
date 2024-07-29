@@ -29,7 +29,7 @@
 #define FalseBit OCR2A = 230 //pulsduur false  bit 230
 
 #define AantalDatabytes 6
-#define Aantalbuffers 20
+#define Aantalbuffers 30
 #define Aantalrepeats 4
 #define Aantalpreamples 12
 #define Aantalwisselstraatsets 2
@@ -92,7 +92,8 @@ byte actiecount;
 byte WS[Aantalwisselstraatsets]; //bit0,1 knop 1~4    bit2,3,4,5 knopset 0~15  bit7=actief 
 //[gekozen wisselstraatset][4]=aantal knoppen in de knop set [8]=aantalacties in een wisselstraat
 byte WSactie[Aantalwisselstraatsets][4][AantalWisselstraatacties]; //bit0=stand(port) bit1,2 channel bit 3,4,5,6 knopset 0~15 bit7=aan/uit, actief
-byte WSdelay; //periode tussen twee acties in een wisselstraat, voorlopig even instellen in init()
+byte WSdelayfactor;
+//byte WSdelay; //periode tussen twee acties in een wisselstraat, voorlopig even instellen in init()
 
 String txt;
 String txtbovenbalk;
@@ -102,6 +103,7 @@ byte Reg; //EEprom 5
 //bit0= smartleds true RGB false=GRB 
 
 byte kleur[3]; //smartled 0=r 1=g 2=b
+byte lh; //led helderheid
 byte shiftcount = 0; //welke van de 10 switch lijnen wordt getest
 byte comlast[10]; //Laatst bekende stand van de schakelaar
 unsigned long slowtime;
@@ -199,7 +201,10 @@ void setup() {
 void Eepromread() {
 	byte _pos;
 	Reg = EEPROM.read(5);
-	WSdelay = 25; //voorlopig even een vaste waarde
+	lh = EEPROM.read(6); if (lh > 10)lh = 3;
+	WSdelayfactor = EEPROM.read(7);
+	if(WSdelayfactor>20)WSdelayfactor =3 ; //factor in stappen van 100ms dus default=300ms
+
 	CVreg = 0xFF; //ook even een vaste waarde, misschien blijkt later opslag nodig te zijn.
 
 	//wisselstraten 
@@ -248,6 +253,8 @@ void Eepromwrite() {
 
 	EEPROM.update(1, 0);
 	EEPROM.update(5, Reg); //default =0xFF
+	EEPROM.update(6, lh); //led helderheid
+	EEPROM.update(7, WSdelayfactor); //pauze in de wisselstraten
 
 	for (byte i = 0; i < 2; i++) {
 		EEPROM.update(10 + i, switchgroup[i]);
@@ -855,7 +862,7 @@ void DCC_Straat(byte _dec, byte _chan, byte _wss) {
 
 			buffer[_buffer].repeat = Aantalrepeats;
 			//delay instellen
-			buffer[_buffer].delay = a * WSdelay; //tijd in stappen van 10ms
+			buffer[_buffer].delay = a * (WSdelayfactor*10); //tijd in stappen van 10ms
 			DCC_puls(_actiedec, _buffer, buffer[_buffer].delay); //maakt tweede off command na aflopen delay
 
 			//stand van de actie instellen 
@@ -976,28 +983,28 @@ bool iswisselstraat(byte _set) {  //dec, chan
 void Kleur(byte _nummer) {
 	switch (_nummer) {
 	case 0: //grijs
-		kleur[0] = 1;
-		kleur[1] = 1;
-		kleur[2] = 1;
+		kleur[0] = 0;
+		kleur[1] = 0;
+		kleur[2] = 0;
 		break;
 	case 1: //rood
-		kleur[0] = 100;
+		kleur[0] = 1+lh*20;
 		kleur[1] = 0;
 		kleur[2] = 0;
 		break;
 	case 2: //groen
 		kleur[0] = 0;
-		kleur[1] = 100;
+		kleur[1] = 1+lh*20;
 		kleur[2] = 0;
 		break;
 	case 3: //paars
-		kleur[0] = 70;
+		kleur[0] = 1+lh*15;
 		kleur[1] = 0;
-		kleur[2] = 70;
+		kleur[2] = 1+lh*16;
 		break;
 	case 4: //geel(zwak)
-		kleur[0] = 50;
-		kleur[1] = 30;
+		kleur[0] = 1+lh*5;
+		kleur[1] = 1+lh*5;
 		kleur[2] = 0;
 		break;
 	}
@@ -1497,7 +1504,7 @@ void SW_common(byte _button, bool _onoff) {
 			if (para < 4)para++;
 			break;
 		case 2: //algemene instellingen
-			if (para < 3)para++; //volgende parameter
+			if (para < 2)para++; //volgende parameter
 			break;
 		}
 		break;
@@ -1583,6 +1590,12 @@ void SW_common(byte _button, bool _onoff) {
 			switch (para) {
 			case 0: //instellen RGB of GRB
 				Reg |= (1 << 0);
+				break;
+			case 1:
+				if (lh > 0)lh--;
+				break;
+			case 2: //pauze in de wisselstraten
+				if (WSdelayfactor > 0)WSdelayfactor--;
 				break;
 			}
 			break;
@@ -1687,6 +1700,12 @@ void SW_common(byte _button, bool _onoff) {
 			switch (para) {
 			case 0: //RGB of GRB
 				Reg &= ~(1 << 0);
+				break;
+			case 1: //lh=led helderheid
+				if (lh < 9)lh++;
+				break;
+			case 2:
+				if (WSdelayfactor < 19)WSdelayfactor++;
 				break;
 			}
 			break;
@@ -2319,8 +2338,23 @@ void DP_common() {
 		else {
 			dp.print("GRB");
 		}
+		_temp = 1;
+		if (para == 1) { //helderheid smartleds
+			dp.fillRect(52, 18, 22, 19, 1);
+			_temp = 0;
+		}
+		dp.drawCircle(62, 27, 8, _temp);
+		dp.fillCircle(62, 27, lh, _temp);
+		
+		_temp = 1;
+		if (para == 2) { //pauze in wisselstraat 
+			dp.fillRect(5, 40, 42, 20, 1);
+			_temp = 0;
+		}
+		dp.drawRect(7, 44, 38, 12, _temp);
+		dp.fillRect(7, 44, WSdelayfactor * 2, 12, _temp);
+		
 		break;
-
 	case 3: //******************Factory reset
 		//dp.fillRect(0, 0, 128, 14, 1);
 		//dp.setCursor(10, 2);
