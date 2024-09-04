@@ -203,7 +203,7 @@ void Eepromread() {
 	Reg = EEPROM.read(5);
 	lh = EEPROM.read(6); if (lh > 10)lh = 3;
 	WSdelayfactor = EEPROM.read(7);
-	if(WSdelayfactor>20)WSdelayfactor =3 ; //factor in stappen van 100ms dus default=300ms
+	if (WSdelayfactor > 20)WSdelayfactor = 3; //factor in stappen van 100ms dus default=300ms
 
 	CVreg = 0xFF; //ook even een vaste waarde, misschien blijkt later opslag nodig te zijn.
 
@@ -862,7 +862,7 @@ void DCC_Straat(byte _dec, byte _chan, byte _wss) {
 
 			buffer[_buffer].repeat = Aantalrepeats;
 			//delay instellen
-			buffer[_buffer].delay = a * (WSdelayfactor*10); //tijd in stappen van 10ms
+			buffer[_buffer].delay = a * (WSdelayfactor * 10); //tijd in stappen van 10ms
 			DCC_puls(_actiedec, _buffer, buffer[_buffer].delay); //maakt tweede off command na aflopen delay
 
 			//stand van de actie instellen 
@@ -988,23 +988,23 @@ void Kleur(byte _nummer) {
 		kleur[2] = 0;
 		break;
 	case 1: //rood
-		kleur[0] = 1+lh*20;
+		kleur[0] = 1 + lh * 20;
 		kleur[1] = 0;
 		kleur[2] = 0;
 		break;
 	case 2: //groen
 		kleur[0] = 0;
-		kleur[1] = 1+lh*20;
+		kleur[1] = 1 + lh * 20;
 		kleur[2] = 0;
 		break;
 	case 3: //paars
-		kleur[0] = 1+lh*15;
+		kleur[0] = 1 + lh * 15;
 		kleur[1] = 0;
-		kleur[2] = 1+lh*16;
+		kleur[2] = 1 + lh * 16;
 		break;
 	case 4: //geel(zwak)
-		kleur[0] = 1+lh*5;
-		kleur[1] = 1+lh*5;
+		kleur[0] = 1 + lh * 5;
+		kleur[1] = 1 + lh * 5;
 		kleur[2] = 0;
 		break;
 	}
@@ -1236,6 +1236,9 @@ void SW_button(byte _button, bool _onoff) {
 			case 5: //S3
 				//dec value
 				switch (cursor) {
+
+
+
 				case 0: //kiezen decoder op de knoppen S1~S8
 					if (switchgroup[_group] > 0) switchgroup[_group]--;
 					break;
@@ -1401,14 +1404,17 @@ void SW_common(byte _button, bool _onoff) {
 				if ((CVadres > 10)) {
 					CVadres -= 10;
 				}
+
+				//3sept2024 broadcast command werkt gewoon niet hiermee uitgeschakeld
+				//else {
+				//	if (CVadres == 1) {
+				//		CVadres = 0; //maakt een BROADCAST command mogelijk
+				//	}
+
 				else {
-					if (CVadres == 1) {
-						CVadres = 0; //maakt een BROADCAST command mogelijk
-					}
-					else {
-						CVadres = 1;
-					}
+					CVadres = 1;
 				}
+				//}
 				break;
 			case 2: //CVnummer
 				if (CVnum > 9) { //CVnum loopt van 0~1023 maar wordt getoond en gecommuniceerd in handleidingen als 1~1024
@@ -1730,6 +1736,7 @@ void CV_exe() {
 	}
 	//invullen databytes
 	_adres = CVadres;
+
 	if (CVreg & (1 << 0)) { //accessoire
 
 		//aantal databytes=adres-instruction(1AAA0000)-CV1-CV2-CV3-checksum =6 aantalbytes=5 (0,1,2,3,4,5,)
@@ -1753,12 +1760,17 @@ void CV_exe() {
 		}
 		_bytecount++;
 	}
+
 	else { //loc
 		//aantaldatabytes=adres-CV1-CV2-CV3-checksum =5 aantalbytes=4
 		dccaantalBytes = 4;
 		//alleen kort adres locs geen tweede (instructie)byte, direct door naar de CV bytes
 	}
+
 	dccdata[0] += _adres; //adres optellen bij eerste byte
+
+	//DP_debug(dccdata[0], dccdata[1]);
+
 	//merk op de accessories hebben een byte meer dan locs, bij accessory byte opschuiven
 	//eerste CV byte 111 GGVV GG=(B)11 Write Byte VV=bit10,9 van het CV 10-bits
 	dccdata[_bytecount] = B11101100;
@@ -1955,6 +1967,8 @@ void DP_single() {
 		dp.fillCircle(5 + (i * 8), y1, 2, 1);
 		dp.drawCircle(5 + (i * 8), y2, 2, 1);
 	}
+
+
 	dp.setCursor(42, 1);
 	dp.print(F("Set"));
 
@@ -2345,7 +2359,7 @@ void DP_common() {
 		}
 		dp.drawCircle(62, 27, 8, _temp);
 		dp.fillCircle(62, 27, lh, _temp);
-		
+
 		_temp = 1;
 		if (para == 2) { //pauze in wisselstraat 
 			dp.fillRect(5, 40, 42, 20, 1);
@@ -2353,7 +2367,7 @@ void DP_common() {
 		}
 		dp.drawRect(7, 44, 38, 12, _temp);
 		dp.fillRect(7, 44, WSdelayfactor * 2, 12, _temp);
-		
+
 		break;
 	case 3: //******************Factory reset
 		//dp.fillRect(0, 0, 128, 14, 1);
